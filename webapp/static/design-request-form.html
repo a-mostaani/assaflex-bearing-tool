@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bearing Design Request — AssaFlex</title>
+<style>
+  /* ---- Theming: change these to match assaflex.com's palette/fonts ---- */
+  :root {
+    --af-primary: #c0392b;
+    --af-primary-dark: #96291d;
+    --af-text: #222;
+    --af-muted: #666;
+    --af-border: #d8d8d8;
+    --af-bg: #fafafa;
+    --af-font: Arial, Helvetica, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--af-font);
+    color: var(--af-text);
+    background: var(--af-bg);
+    margin: 0;
+    padding: 24px 16px;
+  }
+  .af-form-wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  p.af-intro { color: var(--af-muted); margin-top: 0; }
+  h2 { font-size: 1.1rem; margin-top: 32px; margin-bottom: 8px; }
+  .af-card {
+    background: #fff; border: 1px solid var(--af-border); border-radius: 8px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 0.85rem; color: var(--af-muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%; padding: 8px; border: 1px solid var(--af-border); border-radius: 4px;
+    font-size: 0.9rem; font-family: inherit;
+  }
+  .af-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .af-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 600px) {
+    .af-grid2, .af-grid3 { grid-template-columns: 1fr; }
+  }
+  .af-field { margin-bottom: 12px; }
+  table.af-combos { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  table.af-combos th, table.af-combos td { border: 1px solid var(--af-border); padding: 4px; }
+  table.af-combos input, table.af-combos select { padding: 4px; font-size: 0.8rem; }
+  .af-row-actions { text-align: center; }
+  .af-remove-row { background: none; border: none; color: var(--af-primary); cursor: pointer; font-size: 1rem; }
+  .af-btn {
+    background: var(--af-primary); color: #fff; border: none; border-radius: 4px;
+    padding: 10px 20px; font-size: 0.95rem; cursor: pointer;
+  }
+  .af-btn:hover { background: var(--af-primary-dark); }
+  .af-btn.af-secondary { background: #fff; color: var(--af-primary); border: 1px solid var(--af-primary); }
+  .af-table-scroll { overflow-x: auto; }
+  #af-status { margin-top: 16px; padding: 12px; border-radius: 6px; display: none; }
+  #af-status.af-ok { background: #e8f5e9; color: #256029; display: block; }
+  #af-status.af-error { background: #fdecea; color: #96291d; display: block; }
+  .af-required::after { content: " *"; color: var(--af-primary); }
+</style>
+</head>
+<body>
+<div class="af-form-wrap">
+  <h1>Request a Bearing Design</h1>
+  <p class="af-intro">
+    Send us your project's bearing schedule and our team will follow up with
+    a recommended design. Fields marked * are required.
+  </p>
+
+  <form id="af-design-form">
+    <div class="af-card">
+      <h2>Your details</h2>
+      <div class="af-grid2">
+        <div class="af-field">
+          <label class="af-required" for="af-name">Name</label>
+          <input id="af-name" required>
+        </div>
+        <div class="af-field">
+          <label for="af-company">Company</label>
+          <input id="af-company">
+        </div>
+        <div class="af-field">
+          <label class="af-required" for="af-email">Email</label>
+          <input id="af-email" type="email" required>
+        </div>
+        <div class="af-field">
+          <label for="af-phone">Phone</label>
+          <input id="af-phone" type="tel">
+        </div>
+      </div>
+      <div class="af-field">
+        <label for="af-schedule-label">Project / bearing reference</label>
+        <input id="af-schedule-label" placeholder="e.g. Robinson Bridge, bearing mark 1.1">
+      </div>
+      <div class="af-field">
+        <label for="af-notes">Notes (optional)</label>
+        <textarea id="af-notes" rows="3"></textarea>
+      </div>
+    </div>
+
+    <div class="af-card">
+      <h2>Maximum bearing envelope</h2>
+      <div class="af-grid3">
+        <div class="af-field">
+          <label for="af-max-long">Max longitudinal (mm)</label>
+          <input id="af-max-long" type="number" step="any">
+        </div>
+        <div class="af-field">
+          <label for="af-max-trans">Max transverse (mm)</label>
+          <input id="af-max-trans" type="number" step="any">
+        </div>
+        <div class="af-field">
+          <label for="af-max-height">Max height (mm)</label>
+          <input id="af-max-height" type="number" step="any">
+        </div>
+      </div>
+    </div>
+
+    <div class="af-card">
+      <h2>Load combinations</h2>
+      <p class="af-intro" style="margin-top:0">
+        One row per coincident design point from your bearing schedule
+        (e.g. SLS Max Vertical, ULS Max Longitudinal, etc). Add as many rows
+        as your schedule has.
+      </p>
+      <div class="af-table-scroll">
+        <table class="af-combos" id="af-combos-table">
+          <thead>
+            <tr>
+              <th>Limit state</th><th>Case</th>
+              <th>Vertical (kN)</th><th>Transverse (kN)</th><th>Longitudinal (kN)</th>
+              <th>Long. disp. (mm)</th><th>Trans. disp. (mm)</th>
+              <th>Rotation (mrad)</th><th>Trans. rotation (mrad)</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="af-combos-body"></tbody>
+        </table>
+      </div>
+      <p><button type="button" class="af-btn af-secondary" id="af-add-row">+ Add row</button></p>
+    </div>
+
+    <button type="submit" class="af-btn" id="af-submit-btn">Submit request</button>
+    <div id="af-status"></div>
+  </form>
+</div>
+
+<script>
+(function () {
+  // Point this at your deployed backend (see webapp/README.md).
+  const API_BASE = window.AF_API_BASE || "https://bearing-api.assaflex.com";
+
+  const LIMIT_STATES = ["SLS", "ULS", "ALS"];
+  const CASES = ["Max Vertical", "Min Vertical", "Max Longitudinal",
+                 "Max Transverse", "Max Displacement", "Max Rotation"];
+
+  const tbody = document.getElementById("af-combos-body");
+
+  function addRow(values) {
+    values = values || {};
+    const tr = document.createElement("tr");
+    const selectHtml = (options, current) => options.map(
+      o => `<option value="${o}" ${o === current ? "selected" : ""}>${o}</option>`
+    ).join("");
+    const numInput = (field, val) =>
+      `<input type="number" step="any" data-field="${field}" value="${val || 0}">`;
+
+    tr.innerHTML = `
+      <td><select data-field="limit_state">${selectHtml(LIMIT_STATES, values.limit_state || "SLS")}</select></td>
+      <td><select data-field="case">${selectHtml(CASES, values.case || "Max Vertical")}</select></td>
+      <td>${numInput("vertical_kN", values.vertical_kN)}</td>
+      <td>${numInput("transverse_kN", values.transverse_kN)}</td>
+      <td>${numInput("longitudinal_kN", values.longitudinal_kN)}</td>
+      <td>${numInput("long_displacement_mm", values.long_displacement_mm)}</td>
+      <td>${numInput("trans_displacement_mm", values.trans_displacement_mm)}</td>
+      <td>${numInput("rotation_mrad", values.rotation_mrad)}</td>
+      <td>${numInput("transverse_rotation_mrad", values.transverse_rotation_mrad)}</td>
+      <td class="af-row-actions"><button type="button" class="af-remove-row" title="Remove row">&times;</button></td>
+    `;
+    tr.querySelector(".af-remove-row").addEventListener("click", () => tr.remove());
+    tbody.appendChild(tr);
+  }
+
+  document.getElementById("af-add-row").addEventListener("click", () => addRow());
+
+  // Start with three blank rows to get people going.
+  addRow(); addRow(); addRow();
+
+  function readRows() {
+    return Array.from(tbody.querySelectorAll("tr")).map(tr => {
+      const row = {};
+      tr.querySelectorAll("[data-field]").forEach(el => {
+        row[el.dataset.field] = el.tagName === "SELECT" ? el.value : parseFloat(el.value) || 0;
+      });
+      return row;
+    });
+  }
+
+  document.getElementById("af-design-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const statusEl = document.getElementById("af-status");
+    const submitBtn = document.getElementById("af-submit-btn");
+    statusEl.className = ""; statusEl.style.display = "";
+
+    const combinations = readRows();
+    if (combinations.length === 0) {
+      statusEl.textContent = "Add at least one load combination.";
+      statusEl.className = "af-error";
+      return;
+    }
+
+    const payload = {
+      schedule: {
+        label: document.getElementById("af-schedule-label").value,
+        combinations: combinations,
+        max_longitudinal_mm: parseFloat(document.getElementById("af-max-long").value) || null,
+        max_transverse_mm: parseFloat(document.getElementById("af-max-trans").value) || null,
+        max_height_mm: parseFloat(document.getElementById("af-max-height").value) || null,
+        mu: 0.3, msf: 0.7, esl: 0
+      },
+      submitter: {
+        name: document.getElementById("af-name").value,
+        company: document.getElementById("af-company").value,
+        email: document.getElementById("af-email").value,
+        phone: document.getElementById("af-phone").value,
+        notes: document.getElementById("af-notes").value
+      }
+    };
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Submitting…";
+    try {
+      const res = await fetch(API_BASE + "/api/design-schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        statusEl.textContent = data.message || "Request received.";
+        statusEl.className = "af-ok";
+        document.getElementById("af-design-form").reset();
+      } else {
+        statusEl.textContent = (data.detail || "Something went wrong. Please try again.");
+        statusEl.className = "af-error";
+      }
+    } catch (err) {
+      statusEl.textContent = "Couldn't reach the server. Please try again later.";
+      statusEl.className = "af-error";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Submit request";
+    }
+  });
+})();
+</script>
+</body>
+</html>

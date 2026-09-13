@@ -1,0 +1,71 @@
+{
+  "_source": "Bridge_Bearing_Drawings_1.pdf, page 2 (H3428-TYP-A-TI-DC-ST-0077), transcribed by hand from a scanned drawing -- verify all numbers before using for a real design.",
+  "job": "H3428 - Immingham Eastern Ro-Ro Terminal, Robinson Bridge (Associated British Ports / Dragados)",
+  "drawing_ref": "H3428-TYP-A-TI-DC-ST-0077",
+  "bearing_mark": "1.1",
+  "positions": ["A0-1", "A0-2", "A0-3", "A5-1", "A5-2", "A5-3"],
+  "quantity_per_schedule_column": 1,
+  "existing_reference_bearing_note": "Section drawing references 'Elastomeric Bearing with reinforcing plates Freyssinet Type B 350x450 or similar approved' -- the schedule's max envelope (below) is what actually governs an alternative design.",
+  "seating_material": {"upper_surface": "In-situ concrete", "lower_surface": "In-situ concrete"},
+  "support_area_characteristic_strength_N_per_mm2": {"upper_face": 40, "lower_face": 40},
+
+  "maxima_actions_kN": {
+    "SLS": {"vertical_max": 1688, "vertical_permanent": 748, "vertical_min": 576,
+            "transverse_Vy_Ed_ser": 28, "longitudinal_Vx_Ed_ser": 84},
+    "ULS": {"vertical_max": 2261, "transverse_Vy_ud": 37, "longitudinal_Vx_ud": 121},
+    "ALS": {"vertical_max": 1155, "transverse_Vy_Ed_max": 82, "longitudinal_Vx_Ed_max": 75}
+  },
+
+  "_combinations_note": "Each entry is one coincident (vertical, transverse, longitudinal, displacement, rotation) design point per EN 1337-1 Table 1. Rotation is transcribed as printed; the drawing labels the first two SLS rows '[rad]' and the rest '[mrad]' -- given the magnitudes (~3-5) these are almost certainly all mrad (a typo in the original drawing), not a mix of rad and mrad. CONFIRM before use.",
+  "combinations": [
+    {"limit_state": "SLS", "case": "Permanent", "vertical_kN": 748},
+    {"limit_state": "SLS", "case": "Max Vertical", "vertical_kN": 1688, "coincident_transverse_kN": 2, "coincident_longitudinal_kN": 65, "coincident_displacement_mm": 8, "coincident_rotation_mrad": 3.51},
+    {"limit_state": "SLS", "case": "Min Vertical", "vertical_kN": 576, "coincident_transverse_kN": 24, "coincident_longitudinal_kN": 25, "coincident_displacement_mm": 10, "coincident_rotation_mrad": 3.20},
+    {"limit_state": "SLS", "case": "Max Longitudinal", "coincident_vertical_kN": 681, "coincident_transverse_kN": 10, "longitudinal_kN": 84, "coincident_displacement_mm": 24, "coincident_rotation_mrad": 3.94},
+
+    {"limit_state": "ULS", "case": "Max Vertical", "vertical_kN": 2261, "coincident_transverse_kN": 3, "coincident_longitudinal_kN": 96, "coincident_displacement_mm": 11, "coincident_rotation_mrad": 4.65},
+    {"limit_state": "ULS", "case": "Min Vertical", "vertical_kN": 734, "coincident_transverse_kN": 35, "coincident_longitudinal_kN": 34, "coincident_displacement_mm": 14, "coincident_rotation_mrad": 4.22},
+    {"limit_state": "ULS", "case": "Max Longitudinal", "coincident_vertical_kN": 886, "coincident_transverse_kN": 13, "longitudinal_kN": 121, "coincident_displacement_mm": 35, "coincident_rotation_mrad": 5.24},
+
+    {"limit_state": "ALS", "case": "Max Vertical", "vertical_kN": 1155, "coincident_transverse_kN": 25, "coincident_longitudinal_kN": 22, "coincident_displacement_mm": 16, "coincident_rotation_mrad": 3.01},
+    {"limit_state": "ALS", "case": "Min Vertical", "vertical_kN": 365, "coincident_transverse_kN": 81, "coincident_longitudinal_kN": 20, "coincident_displacement_mm": 24, "coincident_rotation_mrad": 2.96},
+    {"limit_state": "ALS", "case": "Max Transverse", "coincident_vertical_kN": 771, "transverse_kN": 82, "coincident_longitudinal_kN": 21, "coincident_displacement_mm": 27, "coincident_rotation_mrad": 2.97}
+  ],
+
+  "displacement_mm": {
+    "_note": "'irreversible' = permanent/creep/shrinkage/temperature component; the 'reversible ... ,i' row is labelled with the EN 1337 'i' subscript, read here as the TOTAL design displacement (irreversible + reversible) -- CONFIRM this reading.",
+    "SLS": {"irreversible_longitudinal": 6, "irreversible_transverse": 0, "irreversible_rotation_mrad": 1.07,
+            "total_max_longitudinal_incl_irreversible": 24, "coincident_transverse": 4,
+            "coincident_rotation_mrad": 3.94, "coincident_vertical_kN": 697,
+            "coincident_transverse_kN": 3, "coincident_longitudinal_kN": 9},
+    "ULS": {"irreversible_longitudinal": 6, "irreversible_transverse": 0, "irreversible_rotation_mrad": 1.07,
+            "total_max_longitudinal_incl_irreversible": 35, "coincident_transverse": 5,
+            "coincident_rotation_mrad": 5.24, "coincident_vertical_kN": 907,
+            "coincident_transverse_kN": 5, "coincident_longitudinal_kN": 20},
+    "ALS": {"irreversible_longitudinal": 6, "irreversible_transverse": 0, "irreversible_rotation_mrad": 1.07,
+            "total_max_longitudinal_incl_irreversible": 14, "coincident_transverse": 24,
+            "coincident_rotation_mrad": 2.97, "coincident_vertical_kN": 734,
+            "coincident_transverse_kN": 22, "coincident_longitudinal_kN": 46}
+  },
+
+  "rotation_mrad": {
+    "SLS": {"irreversible_transverse": 0, "irreversible_longitudinal": 1.07,
+            "total_max_longitudinal_incl_irreversible": 5.11, "coincident_transverse": 0.83,
+            "coincident_longitudinal_disp_mm": 23, "coincident_transverse_disp_mm": 3,
+            "coincident_vertical_kN": 870, "coincident_transverse_kN": 1, "coincident_longitudinal_kN": 64},
+    "ULS": {"irreversible_transverse": 0, "irreversible_longitudinal": 1.07,
+            "total_max_longitudinal_incl_irreversible": 6.67, "coincident_transverse": 1.13,
+            "coincident_longitudinal_disp_mm": 33, "coincident_transverse_disp_mm": 5,
+            "coincident_vertical_kN": 1150, "coincident_transverse_kN": 1, "coincident_longitudinal_kN": 95},
+    "max_rate_100mrad_per_kN": {"transverse": 0.16, "longitudinal": 0.59}
+  },
+
+  "maximum_bearing_dimensions_mm": {
+    "upper_surface": {"transverse": 600, "longitudinal": 450},
+    "lower_surface": {"transverse": 600, "longitudinal": 450},
+    "overall_height": 100
+  },
+
+  "fixing_required": {"upper_face": "Contractor's design", "lower_face": "Contractor's design"},
+  "special_requirements": "No special requirements"
+}
