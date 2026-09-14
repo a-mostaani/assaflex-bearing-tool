@@ -66,7 +66,12 @@ class ScheduleIn(BaseModel):
     max_transverse_mm: Optional[float] = None
     max_height_mm: Optional[float] = None
     mu: float = 0.3
-    msf: float = 0.7
+    # None (the default) lets the optimizer search the manufacturing
+    # catalog's msf_options for the smallest value that makes a feasible
+    # design possible (see bearing_tool.schedule.BearingSchedule.msf) --
+    # this form deliberately doesn't expose an msf field to the visitor, so
+    # it's always None here in practice, letting the catalog decide.
+    msf: Optional[float] = None
     esl: int = 0
 
 
@@ -104,6 +109,7 @@ class DesignOut(BaseModel):
     ts_mm: Optional[float] = None
     g_n_per_mm2: Optional[float] = None
     bearing_type: Optional[float] = None
+    msf: Optional[float] = None
     plan_area_mm2: Optional[float] = None
     total_volume_mm3: Optional[float] = None
     feasible_count: int = 0
@@ -127,7 +133,7 @@ def _design_out(result) -> DesignOut:
         w_mm=b.w, l_mm=b.l, h_mm=b.result.overal_height,
         total_elastomer_thickness_mm=b.n * b.ti,
         n=b.n, ti_mm=b.ti, ts_mm=b.ts, g_n_per_mm2=b.g, bearing_type=b.bearing_type,
-        plan_area_mm2=b.plan_area, total_volume_mm3=b.total_volume,
+        msf=b.msf, plan_area_mm2=b.plan_area, total_volume_mm3=b.total_volume,
         feasible_count=result.feasible_count,
         combinations_evaluated=result.combinations_evaluated,
     )

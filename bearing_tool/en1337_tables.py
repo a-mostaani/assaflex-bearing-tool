@@ -89,4 +89,64 @@ ELLIPTICAL_B_OVER_A: List[float] = [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0, 1.0
 ELLIPTICAL_KCE: List[float] = [0.25, 0.252, 0.258, 0.262, 0.266, 0.269, 0.270, 0.277, 0.300]  # compression factor
 ELLIPTICAL_KDE: List[float] = [0.125, 0.174, 0.204, 0.233, 0.249, 0.265, 0.272, 0.277, 0.300]  # rotation factor
 ELLIPTICAL_KSE: List[float] = [150, 115.6, 100, 84.4, 75.7, 68.7, 64.1, 62, 60]  # restoring moment factor
+
+
+# ---------------------------------------------------------------------------
+# Table 3 -- Standard sizes for TYPE B bearings (rectangular a x b rows only;
+# this table's separate circular "phi D" rows are omitted since this solver
+# doesn't support circular bearings -- see the elliptical table above).
+#
+# Source: image supplied by Ash, 2026-09-14. Transcribed by hand -- double-
+# check against your copy of the standard before relying on this.
+#
+# Reference/informational only -- NOT wired into bearing_tool.catalog.Catalog
+# or the optimizer's search loop. It's here so bearing_tool.catalog's
+# ti_options/n_min/n_max defaults can be checked against it (see that
+# module's docstrings) and so a future "snap to a real EN 1337-3 standard
+# size" feature has the data ready, without forcing the optimizer to only
+# ever try these exact (a, b) pairs -- a real design's plan size is
+# routinely somewhere *between* these nominal rows (e.g. the H3428 schedule's
+# own best design, 250x425mm, falls between the table's 250x400 and 300x400
+# rows), so restricting the search to only the table's listed sizes would
+# make real, previously-working designs newly unfindable.
+#
+# Fields, in order: (a_mm, b_mm, unloaded_thickness_min_mm,
+# unloaded_thickness_max_mm, elastomer_total_min_mm, elastomer_total_max_mm,
+# elastomer_layer_thickness_mm, reinforcing_plates, n_min, n_max).
+# `elastomer_layer_thickness_mm` is this table's "ti" -- confirmed exactly
+# self-consistent with the total/n columns throughout (e.g. 100x150:
+# n=2..3 layers of 8mm = 16..24mm total, matching the table). Note
+# `reinforcing_plates` is a single reference count per row (not itself a
+# min/max range) and doesn't always equal n_min+1 or n_max+1 -- treat it as
+# nominal/typical rather than a hard per-n constraint; bearing_tool already
+# derives the real plate count from n (n+1 for type 2, n-1 for type 3 --
+# see solver.py) rather than reading it from here.
+# ---------------------------------------------------------------------------
+TABLE_3_TYPE_B_SIZES: List[Tuple[float, float, float, float, float, float, float, int, int, int]] = [
+    (100, 150, 30, 41, 16, 24, 8, 3, 2, 3),
+    (100, 200, 30, 41, 16, 24, 8, 3, 2, 3),
+    (150, 200, 30, 52, 16, 32, 8, 3, 2, 4),
+    (150, 250, 30, 52, 16, 32, 8, 3, 2, 4),
+    (150, 300, 30, 52, 16, 32, 8, 3, 2, 4),
+    (200, 250, 41, 74, 24, 48, 8, 3, 3, 6),
+    (200, 300, 41, 74, 24, 48, 8, 3, 3, 6),
+    (200, 350, 41, 74, 24, 48, 8, 3, 3, 6),
+    (200, 400, 41, 74, 24, 48, 8, 3, 3, 6),
+    (250, 300, 41, 85, 24, 56, 8, 3, 3, 7),
+    (250, 400, 41, 85, 24, 56, 8, 3, 3, 7),
+    (300, 400, 57, 105, 36, 72, 12, 4, 3, 6),
+    (300, 500, 57, 105, 36, 72, 12, 4, 3, 6),
+    (300, 600, 57, 105, 36, 72, 12, 4, 3, 6),
+    (350, 450, 57, 121, 36, 84, 12, 4, 3, 7),
+    (400, 500, 73, 137, 48, 96, 12, 4, 4, 8),
+    (400, 600, 73, 137, 48, 96, 12, 4, 4, 8),
+    (450, 600, 73, 153, 48, 108, 12, 4, 4, 9),
+    (500, 600, 73, 169, 48, 120, 12, 4, 4, 10),
+    (600, 600, 94, 199, 64, 144, 16, 5, 4, 9),
+    (600, 700, 94, 199, 64, 144, 16, 5, 4, 9),
+    (700, 700, 94, 220, 64, 160, 16, 5, 4, 10),
+    (700, 800, 94, 220, 64, 160, 16, 5, 4, 10),
+    (800, 800, 110, 285, 80, 220, 20, 5, 4, 10),
+    (900, 900, 110, 285, 80, 220, 20, 5, 4, 11),
+]
 ELLIPTICAL_B_OVER_A_1_IS_INTERPOLATION_ONLY = True  # see docstring above

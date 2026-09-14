@@ -138,16 +138,32 @@ class BearingSchedule:
 
     # Process parameters this schedule was written against.
     mu: float = 0.3
-    msf: float = 0.7
+    # None = no single fixed value -- let the search (bearing_tool.optimizer.
+    # find_optimal_design_for_schedule) try every value in the manufacturing
+    # catalog's msf_options instead (see Catalog.msf_options). Set this to a
+    # specific number when the schedule was written against one fixed,
+    # already-agreed safety factor (e.g. a client contract) -- that exact
+    # value is then used everywhere and no msf search happens.
+    msf: Optional[float] = None
     esl: int = 0
 
     def check_all(self, w: float, l: float, n: int, ti: float, ts: float,
-                   g: float, bearing_type: float) -> ScheduleCheckResult:
-        """Check a candidate geometry against every combination. All must pass."""
+                   g: float, bearing_type: float,
+                   msf: Optional[float] = None) -> ScheduleCheckResult:
+        """Check a candidate geometry against every combination. All must pass.
+
+        `msf` overrides `self.msf` for this call only (used by the optimizer
+        to probe several candidate values without mutating the schedule).
+        Falls back to 0.7 if neither is set -- matching this tool's
+        historical fixed default -- so a schedule built without any msf in
+        mind still behaves the same as before this became searchable.
+        """
+        effective_msf = msf if msf is not None else (
+            self.msf if self.msf is not None else 0.7)
         checks: List[CombinationCheck] = []
         min_ts_values: List[float] = []
         for combo in self.combinations:
-            kwargs = combo.to_solver_kwargs(self.msf)
+            kwargs = combo.to_solver_kwargs(effective_msf)
             r = evaluate_bearing(w=w, l=l, n=n, ti=ti, ts=ts, g=g, mu=self.mu,
                                   bearing_type=bearing_type, esl=self.esl, **kwargs)
             checks.append(CombinationCheck(combination=combo, result=r))
@@ -195,7 +211,7 @@ class BearingSchedule:
             max_longitudinal_mm=data.get("max_longitudinal_mm"),
             max_transverse_mm=data.get("max_transverse_mm"),
             max_height_mm=data.get("max_height_mm"),
-            mu=data.get("mu", 0.3), msf=data.get("msf", 0.7), esl=data.get("esl", 0),
+            mu=data.get("mu", 0.3), msf=data.get("msf"), esl=data.get("esl", 0),
         )
 
     @classmethod

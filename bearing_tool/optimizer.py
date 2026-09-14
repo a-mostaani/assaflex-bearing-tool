@@ -23,6 +23,17 @@ the search from 6 dimensions to 5. At default catalog settings that is on
 the order of 10^6 evaluations, taking single-digit seconds in pure Python
 (see benchmarks in tests/test_optimizer.py).
 
+`msf` (see Catalog.msf_options) is handled similarly to `ts` but isn't
+solved for analytically -- unlike `ts`, it changes what the strain/capacity
+checks themselves allow, not just downstream geometry, so it has to be
+probed via real evaluate_bearing() calls. It's cheap in practice: for each
+of the 5 geometry dimensions above, candidate msf values are tried smallest
+(safest) first and the search stops at the first one that's feasible, so a
+geometry that's already feasible at the smallest msf costs exactly one
+extra evaluate_bearing() call, not len(msf_options) of them -- only a
+geometry that needs a larger msf (or is infeasible at every value) costs
+more, up to len(msf_options) calls.
+
 If your catalog grows much larger than the default and search time becomes a
 problem, the natural next step is a proper heuristic (simulated annealing /
 coordinate search seeded from this grid's best point) rather than a finer
@@ -69,6 +80,11 @@ class Candidate:
     g: float
     bearing_type: float
     result: BearingResult
+    # The msf actually used to make this candidate feasible (see
+    # Catalog.msf_options) -- always recorded, even when the caller pinned
+    # a single msf explicitly, so it's visible in every result rather than
+    # only when it was searched.
+    msf: float = 0.7
 
     @property
     def total_volume(self) -> Optional[float]:
@@ -104,12 +120,16 @@ def find_optimal_design(
 ) -> OptimizationResult:
     """Search the catalog for the minimum-total-volume design that satisfies `req`.
 
-    `mu`/`msf`/`esl` default to the catalog's process defaults but can be
-    overridden per call (e.g. a client requiring a non-standard safety factor).
+    `mu`/`esl` default to the catalog's process defaults but can be
+    overridden per call. `msf` defaults to *searching* `catalog.msf_options`
+    (smallest/most conservative first, keeping the smallest one that makes
+    each candidate geometry feasible) -- pass an explicit `msf` to pin a
+    single value instead (e.g. a client requiring a specific safety factor),
+    which skips that search entirely.
     """
     mu = catalog.mu if mu is None else mu
-    msf = catalog.msf if msf is None else msf
     esl = catalog.esl if esl is None else esl
+    msf_candidates = [msf] if msf is not None else sorted(catalog.msf_options)
 
     plan_values = catalog.plan_values()
     n_values = catalog.n_values()
@@ -145,13 +165,24 @@ def find_optimal_design(
                         # First pass: cheapest ts placeholder just to learn
                         # feasibility and the required min_ts (ts does not
                         # affect either the strain checks or min_ts itself).
-                        probe = evaluate_bearing(
-                            w=w, l=l, n=n, ti=ti, ts=catalog.ts_options[0], g=g,
-                            mu=mu, bearing_type=catalog.bearing_types[0], esl=esl,
-                            ndd=req.ndd, nrd=req.nrd, perc1=req.perc1, perc2=req.perc2,
-                            msf=msf, dl=req.dl, dr=req.dr, dd1=req.dd1, dd2=req.dd2,
-                        )
-                        if not probe.feasible:
+                        # Try msf candidates smallest (safest) first and
+                        # keep the first one that makes this geometry
+                        # feasible -- a higher msf never makes a geometry
+                        # LESS feasible, so this is the most conservative
+                        # msf that works, not an arbitrary one.
+                        probe = None
+                        chosen_msf = None
+                        for cand_msf in msf_candidates:
+                            probe = evaluate_bearing(
+                                w=w, l=l, n=n, ti=ti, ts=catalog.ts_options[0], g=g,
+                                mu=mu, bearing_type=catalog.bearing_types[0], esl=esl,
+                                ndd=req.ndd, nrd=req.nrd, perc1=req.perc1, perc2=req.perc2,
+                                msf=cand_msf, dl=req.dl, dr=req.dr, dd1=req.dd1, dd2=req.dd2,
+                            )
+                            if probe.feasible:
+                                chosen_msf = cand_msf
+                                break
+                        if chosen_msf is None:
                             continue
                         feasible_count += 1
 
@@ -164,7 +195,7 @@ def find_optimal_design(
                                 w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
                                 mu=mu, bearing_type=bearing_type, esl=esl,
                                 ndd=req.ndd, nrd=req.nrd, perc1=req.perc1,
-                                perc2=req.perc2, msf=msf, dl=req.dl, dr=req.dr,
+                                perc2=req.perc2, msf=chosen_msf, dl=req.dl, dr=req.dr,
                                 dd1=req.dd1, dd2=req.dd2,
                             )
                             if not final.feasible or not final.ts_ok:
@@ -172,7 +203,7 @@ def find_optimal_design(
 
                             cand = Candidate(
                                 w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
-                                bearing_type=bearing_type, result=final,
+                                bearing_type=bearing_type, result=final, msf=chosen_msf,
                             )
                             top.append(cand)
                             top.sort(key=lambda c: c.total_volume)
@@ -238,7 +269,14 @@ def find_optimal_design_for_schedule(
     top_n: int = 5,
 ) -> ScheduleOptimizationResult:
     """Search the catalog for the minimum-total-volume design that passes
-    EVERY combination in `schedule` (see BearingSchedule.check_all)."""
+    EVERY combination in `schedule` (see BearingSchedule.check_all).
+
+    If `schedule.msf` is set to a specific number, every check uses exactly
+    that value (unchanged from before this became searchable). If it's
+    None, each candidate geometry is checked against `catalog.msf_options`
+    (smallest/safest first), keeping the smallest value that makes it
+    feasible -- see Catalog.msf_options.
+    """
     if not schedule.combinations:
         return ScheduleOptimizationResult(
             schedule_label=schedule.label,
@@ -273,6 +311,8 @@ def find_optimal_design_for_schedule(
             ),
         )
 
+    msf_candidates = [schedule.msf] if schedule.msf is not None else sorted(catalog.msf_options)
+
     ts_min_catalog = min(catalog.ts_options)
     top: List[Candidate] = []
     top_checks: List[ScheduleCheckResult] = []  # parallel to `top`
@@ -292,10 +332,22 @@ def find_optimal_design_for_schedule(
                                 continue  # cannot possibly fit, even with the thinnest shim
                             evaluated += 1
 
-                            check = schedule.check_all(w=w, l=l, n=n, ti=ti,
+                            # Try msf candidates smallest (safest) first and
+                            # keep the first that makes this geometry pass
+                            # every combination -- see find_optimal_design's
+                            # matching comment.
+                            check = None
+                            chosen_msf = None
+                            for cand_msf in msf_candidates:
+                                c = schedule.check_all(w=w, l=l, n=n, ti=ti,
                                                         ts=ts_min_catalog, g=g,
-                                                        bearing_type=bearing_type)
-                            if not check.feasible:
+                                                        bearing_type=bearing_type,
+                                                        msf=cand_msf)
+                                if c.feasible:
+                                    check = c
+                                    chosen_msf = cand_msf
+                                    break
+                            if chosen_msf is None:
                                 continue
                             feasible_count += 1
 
@@ -308,12 +360,16 @@ def find_optimal_design_for_schedule(
                             # ts doesn't affect any strain/capacity formula (see
                             # solver.py), only overal_height/volume/ts_ok -- so a
                             # single extra call with the real ts is enough here,
-                            # no need to re-run check_all.
+                            # no need to re-run check_all. msf doesn't affect
+                            # overal_height either, but evaluate_bearing still
+                            # requires a concrete number -- chosen_msf (never
+                            # None) is used rather than schedule.msf (which is
+                            # None whenever msf was searched, and would crash).
                             final = evaluate_bearing(
                                 w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
                                 mu=schedule.mu, bearing_type=bearing_type,
                                 esl=schedule.esl, ndd=1, nrd=1, perc1=0, perc2=0,
-                                msf=schedule.msf, dl=0, dr=0, dd1=0, dd2=0,
+                                msf=chosen_msf, dl=0, dr=0, dd1=0, dd2=0,
                             )
                             if final.overal_height is None:
                                 continue
@@ -321,7 +377,8 @@ def find_optimal_design_for_schedule(
                                 continue  # the real (thicker) shim pushed height over the cap
 
                             cand = Candidate(w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
-                                              bearing_type=bearing_type, result=final)
+                                              bearing_type=bearing_type, result=final,
+                                              msf=chosen_msf)
                             top.append(cand)
                             top_checks.append(check)
                             order = sorted(range(len(top)), key=lambda i: top[i].total_volume)

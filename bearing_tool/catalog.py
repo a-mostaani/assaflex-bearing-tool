@@ -25,17 +25,31 @@ class Catalog:
     plan_step: float = 25.0
 
     # Number of inner elastomer layers to try (n+1 steel reinforcements).
+    # EN 1337-3 Table 3's "standard sizes" (bearing_tool.en1337_tables.
+    # TABLE_3_TYPE_B_SIZES) top out at n=11 (for a 900x900 bearing) -- this
+    # default range is deliberately wider than that (a real design between
+    # standard sizes, or larger than the table's biggest row, can need more
+    # layers), not narrower.
     n_min: int = 2
     n_max: int = 30
 
-    # Standard inner elastomer layer thicknesses (mm) -- PLACEHOLDER, confirm
-    # against AssaFlex's actual sheet/mold stock.
+    # Standard inner elastomer layer thicknesses (mm). The four values that
+    # appear in EN 1337-3 Table 3 (bearing_tool.en1337_tables.
+    # TABLE_3_TYPE_B_SIZES) are 8/12/16/20mm -- 10 and 14mm are kept here too
+    # as in-between options for a non-standard plan size, since the table's
+    # exact (a, b) pairs are nominal reference sizes, not the only sizes a
+    # real bearing may use (see that table's own docstring). Confirm against
+    # AssaFlex's actual sheet/mold stock.
     ti_options: List[float] = field(default_factory=lambda: [8, 10, 12, 14, 16, 20])
 
     # Standard steel shim thicknesses (mm) available to satisfy the 5.3.3.5
-    # minimum-thickness check -- PLACEHOLDER, confirm against actual steel
-    # plate stock.
-    ts_options: List[float] = field(default_factory=lambda: [2, 3, 4, 5, 6, 8, 10, 12])
+    # minimum-thickness check. Per Ash: 10mm is already a rarely-needed
+    # upper end in practice, so that's the default ceiling here -- PLACEHOLDER
+    # otherwise, confirm against actual steel plate stock. (`ts` never
+    # affects feasibility, only overall height/volume and the 5.3.3.5 check
+    # itself -- see optimizer.py -- so this list only needs to reach as high
+    # as a real job would ever require, not act as a safety margin.)
+    ts_options: List[float] = field(default_factory=lambda: [2, 3, 4, 5, 6, 8, 10])
 
     # Elastomer shear modulus grades (N/mm^2) -- PLACEHOLDER values in the
     # range EN 1337-3 commonly uses for different IRHD hardness grades;
@@ -49,8 +63,24 @@ class Catalog:
 
     # Fixed process parameters (rarely varied per-job, but still editable).
     mu: float = 0.3
-    msf: float = 0.7
     esl: int = 0
+
+    # Candidate values for `msf` -- how much of EN 1337-3's maximum permitted
+    # strain/movement capacity a design is allowed to use (see solver.py;
+    # msf=1.0 uses the standard's full stated allowance, smaller values are
+    # progressively more conservative). This used to be a single fixed
+    # process constant (0.7) -- per Ash, that's not always the right amount
+    # of margin to insist on, so it's now itself a search dimension: for
+    # each candidate geometry, the optimizer (bearing_tool.optimizer) tries
+    # these from smallest (safest) to largest and keeps the smallest one
+    # that makes that geometry feasible, recording which value was actually
+    # used on the returned Candidate so it's visible, not hidden, in the
+    # result. A caller that still wants one fixed value everywhere (e.g. a
+    # client contract that specifies it) can pass an explicit `msf=` to
+    # find_optimal_design / set BearingSchedule.msf, which skips this search
+    # entirely -- see optimizer.py and schedule.py. PLACEHOLDER range,
+    # confirm against what AssaFlex is actually willing to sign off on.
+    msf_options: List[float] = field(default_factory=lambda: [0.7, 0.8, 0.9, 1.0])
 
     # Safety valve: hard cap on how many (w, l, ti, n, g, type) combinations
     # the optimizer will evaluate in one run, so a very loose catalog can't

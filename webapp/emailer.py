@@ -80,6 +80,11 @@ def build_email(schedule: BearingSchedule, submitter: Submitter,
           <li>Total internal elastomer thickness: {_fmt(total_ti, ' mm')}</li>
           <li>n = {b.n}, ti = {_fmt(b.ti, ' mm')}, ts = {_fmt(b.ts, ' mm')},
               g = {b.g} N/mm&sup2;, bearing type {b.bearing_type}</li>
+          <li><strong>msf used: {b.msf}</strong>{
+              ' (searched -- the smallest catalog value that made this '
+              'design feasible; confirm this margin is acceptable before '
+              'sign-off)' if schedule.msf is None else ' (fixed, as specified for this schedule)'
+          }</li>
           <li>Plan area: {_fmt(b.plan_area, ' mm&sup2;', 0)} &mdash;
               Total volume: {_fmt(b.total_volume, ' mm&sup3;', 0)}</li>
           <li>{result.feasible_count:,} feasible design(s) found out of
@@ -107,7 +112,8 @@ def build_email(schedule: BearingSchedule, submitter: Submitter,
     <p><strong>Submitted schedule</strong> (envelope: max longitudinal
        {_fmt(schedule.max_longitudinal_mm, ' mm')}, max transverse
        {_fmt(schedule.max_transverse_mm, ' mm')}, max height
-       {_fmt(schedule.max_height_mm, ' mm')}; &mu;={schedule.mu}, msf={schedule.msf},
+       {_fmt(schedule.max_height_mm, ' mm')}; &mu;={schedule.mu},
+       msf={'searched' if schedule.msf is None else schedule.msf},
        esl={schedule.esl}):</p>
     <table border="1" cellpadding="4" cellspacing="0">
       <tr>

@@ -272,6 +272,7 @@
         <li>Total internal elastomer thickness: ${fmt(design.total_elastomer_thickness_mm, " mm")}</li>
         <li>n = ${design.n}, ti = ${fmt(design.ti_mm, " mm")}, ts = ${fmt(design.ts_mm, " mm")},
             g = ${design.g_n_per_mm2} N/mm&sup2;, bearing type ${design.bearing_type}</li>
+        <li>Design safety factor (msf): ${design.msf ?? "—"}</li>
       </ul>
       <p style="color:#666; font-size:0.8rem; margin:10px 0 0;">
         Auto-computed by the AssaFlex bearing design tool from the schedule you entered.
@@ -308,7 +309,11 @@
         max_longitudinal_mm: parseFloat(document.getElementById("af-max-long").value) || null,
         max_transverse_mm: parseFloat(document.getElementById("af-max-trans").value) || null,
         max_height_mm: parseFloat(document.getElementById("af-max-height").value) || null,
-        mu: 0.3, msf: 0.7, esl: 0
+        // msf deliberately omitted -- the backend then searches the
+        // manufacturing catalog's own msf options for the smallest value
+        // that makes a feasible design possible, instead of assuming one
+        // fixed safety factor (see webapp/main.py's ScheduleIn.msf).
+        mu: 0.3, esl: 0
       },
       submitter: {
         name: document.getElementById("af-name").value,

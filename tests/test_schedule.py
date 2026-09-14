@@ -96,11 +96,16 @@ def test_check_all_matches_individual_evaluate_bearing_calls():
     sched = BearingSchedule.from_client_schedule_json(H3428_PATH)
     w, l, n, ti, ts, g, bt = 400, 550, 8, 10, 4, 1.0, 2
 
-    result = sched.check_all(w=w, l=l, n=n, ti=ti, ts=ts, g=g, bearing_type=bt)
+    # This schedule's own msf is None (search), so pin an explicit value here
+    # -- check_all's None-fallback behaviour is exercised elsewhere; this test
+    # only cares that check_all's per-combination results match a direct
+    # evaluate_bearing() call at whatever msf is actually used.
+    used_msf = 0.7
+    result = sched.check_all(w=w, l=l, n=n, ti=ti, ts=ts, g=g, bearing_type=bt, msf=used_msf)
     assert len(result.checks) == len(sched.combinations)
 
     for check in result.checks:
-        kwargs = check.combination.to_solver_kwargs(sched.msf)
+        kwargs = check.combination.to_solver_kwargs(used_msf)
         direct = evaluate_bearing(w=w, l=l, n=n, ti=ti, ts=ts, g=g, mu=sched.mu,
                                    bearing_type=bt, esl=sched.esl, **kwargs)
         assert direct.feasible == check.passed
@@ -137,9 +142,13 @@ def test_schedule_optimizer_finds_a_design_that_independently_validates():
     assert b.l <= sched.max_transverse_mm
     assert b.result.overal_height <= sched.max_height_mm
 
-    # Independently re-validate against every combination from scratch.
+    # Independently re-validate against every combination from scratch, using
+    # b.msf (the value the optimizer actually used to find this design) --
+    # msf is itself searched (see Catalog.msf_options), so re-checking at a
+    # fixed assumed value would be wrong whenever the search picked a
+    # different one.
     check = sched.check_all(w=b.w, l=b.l, n=b.n, ti=b.ti, ts=b.ts, g=b.g,
-                             bearing_type=b.bearing_type)
+                             bearing_type=b.bearing_type, msf=b.msf)
     assert check.feasible
     assert all(c.passed for c in check.checks)
 

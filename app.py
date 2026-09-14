@@ -237,13 +237,21 @@ with tab_optimizer:
         g_text = st.text_input("g options, N/mm² (comma-separated)", value=", ".join(str(v) for v in cat.g_options))
         cat.g_options = [float(x) for x in g_text.split(",") if x.strip()]
 
+        msf_text = st.text_input(
+            "msf options (comma-separated) — how much of EN 1337-3's max "
+            "permitted strain/movement capacity to allow; the optimizer "
+            "tries these smallest-first and uses the smallest one that "
+            "makes each candidate geometry feasible",
+            value=", ".join(str(v) for v in cat.msf_options),
+        )
+        cat.msf_options = [float(x) for x in msf_text.split(",") if x.strip()]
+
         type_opts = st.multiselect("Bearing types to consider", options=[2, 3], default=cat.bearing_types)
         cat.bearing_types = type_opts or [2]
 
-        cc1, cc2, cc3 = st.columns(3)
+        cc1, cc2 = st.columns(2)
         cat.mu = cc1.number_input("μ (process default)", value=float(cat.mu), step=0.05)
-        cat.msf = cc2.number_input("msf (process default)", value=float(cat.msf), step=0.05)
-        cat.esl = cc3.selectbox("esl (process default)", options=[0, 1], index=int(cat.esl))
+        cat.esl = cc2.selectbox("esl (process default)", options=[0, 1], index=int(cat.esl))
 
         st.caption(f"Grid size: **{cat.estimated_combinations():,}** combinations "
                    f"(≈ {cat.estimated_combinations() / 90000:.0f}–{cat.estimated_combinations() / 45000:.0f} s to search)")
@@ -278,7 +286,7 @@ with tab_optimizer:
             st.success(
                 f"Best design: **w={b.w:.0f} mm × l={b.l:.0f} mm × h={b.result.overal_height:.1f} mm** "
                 f"(total internal elastomer thickness = {total_ti:.1f} mm) — "
-                f"n={b.n}, ti={b.ti} mm, ts={b.ts} mm, g={b.g} N/mm², type {b.bearing_type}"
+                f"n={b.n}, ti={b.ti} mm, ts={b.ts} mm, g={b.g} N/mm², type {b.bearing_type}, msf={b.msf}"
             )
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Plan area", f"{b.plan_area:,.0f} mm²")
@@ -401,8 +409,16 @@ with tab_schedule:
     env_max_trans = e2.number_input("Max transverse (mm)", value=float(default_env[1] or 0), min_value=0.0)
     env_max_height = e3.number_input("Max height (mm)", value=float(default_env[2] or 0), min_value=0.0)
     env_mu = e4.number_input("μ", value=float(default_env[3]), step=0.05)
-    env_msf = e5.number_input("msf", value=float(default_env[4]), step=0.05)
-    env_esl = e6.selectbox("esl", options=[0, 1], index=int(default_env[5]))
+    search_msf = e6.checkbox(
+        "Search msf too", value=False,
+        help="Instead of one fixed msf, try every value in the catalog's "
+             "msf options (smallest-first) and use the smallest one that "
+             "makes each candidate geometry feasible -- see the Catalog "
+             "tab. Off by default so an explicit contract value below is "
+             "used exactly as given.",
+    )
+    env_msf = e5.number_input("msf", value=float(default_env[4]), step=0.05, disabled=search_msf)
+    env_esl = st.selectbox("esl", options=[0, 1], index=int(default_env[5]))
 
     dl_col, ul_col = st.columns(2)
     with ul_col:
@@ -422,7 +438,8 @@ with tab_schedule:
             return BearingSchedule(
                 label=schedule_label, combinations=combos,
                 max_longitudinal_mm=env_max_long or None, max_transverse_mm=env_max_trans or None,
-                max_height_mm=env_max_height or None, mu=env_mu, msf=env_msf, esl=env_esl,
+                max_height_mm=env_max_height or None, mu=env_mu,
+                msf=None if search_msf else env_msf, esl=env_esl,
             )
 
         schedule_json_bytes = (
@@ -454,8 +471,12 @@ with tab_schedule:
                     f"Best design: **w={b.w:.0f} mm (longitudinal) × l={b.l:.0f} mm (transverse) × "
                     f"h={b.result.overal_height:.1f} mm** (total internal elastomer thickness = "
                     f"{total_ti:.1f} mm) — n={b.n}, ti={b.ti} mm, ts={b.ts} mm, g={b.g} N/mm², "
-                    f"type {b.bearing_type}"
+                    f"type {b.bearing_type}, msf={b.msf}"
                 )
+                if search_msf:
+                    st.caption(f"msf was searched (catalog options: "
+                               f"{', '.join(str(v) for v in cat.msf_options)}) — "
+                               f"{b.msf} was the smallest value that made this design feasible.")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Plan area", f"{b.plan_area:,.0f} mm²")
                 m2.metric("Overall height", f"{b.result.overal_height:.1f} mm")
@@ -463,7 +484,9 @@ with tab_schedule:
                 m4.metric("Geometries tried", f"{result.combinations_evaluated:,}")
 
                 st.markdown("**Per-combination check for the winning design**")
-                strain_limit = env_msf * 7
+                # Use the msf actually used for this design (not env_msf,
+                # which is ignored/disabled when "Search msf too" is on).
+                strain_limit = b.msf * 7
                 st.dataframe([
                     {
                         "Combination": c.combination.label,
