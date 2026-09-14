@@ -44,6 +44,18 @@ converges in the original):
   ``feasible=False``, ``failure_reason="load_exceeds_buckling_capacity"``, and
   only the fields the original actually computes before returning -- needed
   so the optimizer can treat this as "infeasible" rather than crash.
+* When the shear-deflection demand alone consumes the entire plan dimension
+  (``Ar`` -- the residual bonded area after shear -- works out to zero or
+  negative), the strain formulas a few lines later divide by ``Ar``, which
+  MATLAB would itself evaluate to Inf/NaN or a divide-by-zero warning rather
+  than a clean answer. Found via the schedule-driven optimizer's own search
+  landing on exactly such a geometry (``msf * n * ti`` happening to equal
+  the plan dimension) and crashing the public web API with an unhandled
+  ``ZeroDivisionError``. Here it returns a normal ``BearingResult`` with
+  ``feasible=False``, ``failure_reason="shear_displacement_exceeds_plan_dimension"``,
+  matching the buckling-overload precedent above -- the optimizer already
+  treats any ``feasible=False`` candidate as a hit to skip, so no caller
+  needed to change.
 
 All four evaluation modes (capacity-mode with load and/or rotation free, and
 full check-mode) plus a type-3 bearing and the overload early-return above
@@ -237,6 +249,24 @@ def evaluate_bearing(
     min_load = max_hor_f / mu
 
     Ar = A1 * (1 - (max_shear_def_w / a) - (max_shear_def_l / b))
+
+    if Ar <= 0:
+        # Geometrically, the shear-deflection demand alone would shear the
+        # elastomer's bonded area down to nothing (or less) at this plan
+        # size -- e.g. msf*n*ti landing on exactly `a` (or `b`) is enough to
+        # trigger this even for an otherwise ordinary geometry. Every strain
+        # formula below divides by Ar, so this must be caught here rather
+        # than left to crash a few lines down (see module docstring).
+        res.warnings.append(
+            "Shear displacement demand exceeds the plan dimension -- no "
+            "residual bonded area remains at this geometry"
+        )
+        res.feasible = False
+        res.failure_reason = "shear_displacement_exceeds_plan_dimension"
+        res.max_vec_shear_def = max_vec_shear_def
+        res.plan_area = A
+        return res
+
     shear_strain_o = max_vec_shear_def / Tq
     shear_strain_i = max_vec_shear_def / Tq
 

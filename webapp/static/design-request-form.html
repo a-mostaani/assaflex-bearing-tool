@@ -59,6 +59,16 @@
   #af-status.af-ok { background: #e8f5e9; color: #256029; display: block; }
   #af-status.af-error { background: #fdecea; color: #96291d; display: block; }
   .af-required::after { content: " *"; color: var(--af-primary); }
+  .af-mode-choice { display: flex; flex-direction: column; gap: 8px; }
+  .af-mode-choice label {
+    display: flex; align-items: flex-start; gap: 8px; font-size: 0.9rem;
+    color: var(--af-text); margin-bottom: 0; cursor: pointer;
+  }
+  .af-mode-choice input[type="radio"] { width: auto; margin-top: 3px; }
+  #af-access-code-field { display: none; margin-top: 10px; max-width: 260px; }
+  #af-design-result { margin-top: 16px; padding: 16px; border-radius: 6px; background: #e8f5e9; display: none; }
+  #af-design-result h3 { margin-top: 0; font-size: 1rem; }
+  #af-design-result ul { margin: 8px 0 0; padding-left: 20px; font-size: 0.9rem; }
 </style>
 </head>
 <body>
@@ -141,8 +151,30 @@
       <p><button type="button" class="af-btn af-secondary" id="af-add-row">+ Add row</button></p>
     </div>
 
+    <div class="af-card">
+      <h2>What should happen next?</h2>
+      <div class="af-mode-choice">
+        <label>
+          <input type="radio" name="af-mode" value="review" checked>
+          <span>Send this to AssaFlex for review — our engineering and sales
+          teams will follow up (default; you won't see the computed design
+          yourself yet).</span>
+        </label>
+        <label>
+          <input type="radio" name="af-mode" value="access-code">
+          <span>I have an access code — show me the computed design directly
+          on this page.</span>
+        </label>
+      </div>
+      <div class="af-field" id="af-access-code-field">
+        <label class="af-required" for="af-access-code">Access code</label>
+        <input id="af-access-code" type="password" autocomplete="off">
+      </div>
+    </div>
+
     <button type="submit" class="af-btn" id="af-submit-btn">Submit request</button>
     <div id="af-status"></div>
+    <div id="af-design-result"></div>
   </form>
 </div>
 
@@ -187,6 +219,28 @@
   // Start with three blank rows to get people going.
   addRow(); addRow(); addRow();
 
+  // Mode toggle: reveal the access-code field only when that path is chosen,
+  // and adjust the submit button's label so it's clear what will happen.
+  const accessCodeField = document.getElementById("af-access-code-field");
+  const accessCodeInput = document.getElementById("af-access-code");
+  const submitBtnEl = document.getElementById("af-submit-btn");
+
+  function currentMode() {
+    return document.querySelector('input[name="af-mode"]:checked').value;
+  }
+
+  function updateModeUI() {
+    const isAccessCode = currentMode() === "access-code";
+    accessCodeField.style.display = isAccessCode ? "block" : "none";
+    accessCodeInput.required = isAccessCode;
+    submitBtnEl.textContent = isAccessCode ? "Show me the design" : "Submit request";
+  }
+
+  document.querySelectorAll('input[name="af-mode"]').forEach(
+    el => el.addEventListener("change", updateModeUI)
+  );
+  updateModeUI();
+
   function readRows() {
     return Array.from(tbody.querySelectorAll("tr")).map(tr => {
       const row = {};
@@ -197,15 +251,52 @@
     });
   }
 
+  function fmt(value, unit) {
+    if (value === null || value === undefined) return "—";
+    return value.toFixed(1) + (unit || "");
+  }
+
+  function renderDesign(design) {
+    const resultEl = document.getElementById("af-design-result");
+    if (!design.feasible) {
+      resultEl.innerHTML = `<p style="margin:0">${design.message ||
+        "No feasible design was found for this schedule in the current catalog."}</p>`;
+      resultEl.style.display = "block";
+      return;
+    }
+    resultEl.innerHTML = `
+      <h3>Computed design</h3>
+      <ul>
+        <li>w = ${fmt(design.w_mm, " mm")} &times; l = ${fmt(design.l_mm, " mm")}
+            &times; h = ${fmt(design.h_mm, " mm")}</li>
+        <li>Total internal elastomer thickness: ${fmt(design.total_elastomer_thickness_mm, " mm")}</li>
+        <li>n = ${design.n}, ti = ${fmt(design.ti_mm, " mm")}, ts = ${fmt(design.ts_mm, " mm")},
+            g = ${design.g_n_per_mm2} N/mm&sup2;, bearing type ${design.bearing_type}</li>
+      </ul>
+      <p style="color:#666; font-size:0.8rem; margin:10px 0 0;">
+        Auto-computed by the AssaFlex bearing design tool from the schedule you entered.
+      </p>`;
+    resultEl.style.display = "block";
+  }
+
   document.getElementById("af-design-form").addEventListener("submit", async function (e) {
     e.preventDefault();
     const statusEl = document.getElementById("af-status");
+    const resultEl = document.getElementById("af-design-result");
     const submitBtn = document.getElementById("af-submit-btn");
     statusEl.className = ""; statusEl.style.display = "";
+    resultEl.style.display = "none"; resultEl.innerHTML = "";
 
     const combinations = readRows();
     if (combinations.length === 0) {
       statusEl.textContent = "Add at least one load combination.";
+      statusEl.className = "af-error";
+      return;
+    }
+
+    const mode = currentMode();
+    if (mode === "access-code" && !accessCodeInput.value.trim()) {
+      statusEl.textContent = "Enter an access code, or switch to “send for review”.";
       statusEl.className = "af-error";
       return;
     }
@@ -225,11 +316,13 @@
         email: document.getElementById("af-email").value,
         phone: document.getElementById("af-phone").value,
         notes: document.getElementById("af-notes").value
-      }
+      },
+      access_code: mode === "access-code" ? accessCodeInput.value.trim() : ""
     };
 
+    const submittingLabel = mode === "access-code" ? "Checking…" : "Submitting…";
     submitBtn.disabled = true;
-    submitBtn.textContent = "Submitting…";
+    submitBtn.textContent = submittingLabel;
     try {
       const res = await fetch(API_BASE + "/api/design-schedule", {
         method: "POST",
@@ -237,10 +330,22 @@
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.status === "authorized") {
+        statusEl.textContent = data.message || "Access code accepted.";
+        statusEl.className = "af-ok";
+        renderDesign(data.design);
+        // Deliberately don't reset the form here -- the access code and
+        // schedule stay filled in so the visitor can tweak values and
+        // re-check without retyping everything.
+      } else if (res.ok) {
         statusEl.textContent = data.message || "Request received.";
         statusEl.className = "af-ok";
         document.getElementById("af-design-form").reset();
+        updateModeUI();
+      } else if (res.status === 401) {
+        statusEl.textContent = "Incorrect access code. Check it and try again, " +
+          "or switch to “send for review” instead.";
+        statusEl.className = "af-error";
       } else {
         statusEl.textContent = (data.detail || "Something went wrong. Please try again.");
         statusEl.className = "af-error";
@@ -250,7 +355,7 @@
       statusEl.className = "af-error";
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = "Submit request";
+      submitBtn.textContent = mode === "access-code" ? "Show me the design" : "Submit request";
     }
   });
 })();

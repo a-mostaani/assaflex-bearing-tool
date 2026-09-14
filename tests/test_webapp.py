@@ -92,3 +92,59 @@ def test_health_check():
     resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_correct_access_code_reveals_design_and_never_emails(monkeypatch):
+    from webapp import config
+    monkeypatch.setattr(config, "DESIGN_ACCESS_CODE", "let-me-in")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("send_email must not be called on the access-code path")
+    monkeypatch.setattr(webapp_main, "send_email", fail_if_called)
+
+    payload = {**VALID_PAYLOAD, "access_code": "let-me-in"}
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "authorized"
+
+    # This IS the one path where the visitor is meant to see the numbers.
+    design = body["design"]
+    assert design["feasible"] is True
+    assert design["w_mm"] > 0 and design["l_mm"] > 0 and design["h_mm"] > 0
+    assert design["n"] and design["ti_mm"]
+
+
+def test_incorrect_access_code_rejected_without_computing_or_emailing(monkeypatch):
+    from webapp import config
+    monkeypatch.setattr(config, "DESIGN_ACCESS_CODE", "let-me-in")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("send_email must not be called on a rejected access code")
+    monkeypatch.setattr(webapp_main, "send_email", fail_if_called)
+
+    payload = {**VALID_PAYLOAD, "access_code": "wrong-code"}
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 401
+
+
+def test_access_code_ignored_when_none_configured(monkeypatch):
+    from webapp import config
+    monkeypatch.setattr(config, "DESIGN_ACCESS_CODE", "")  # unset on the server
+
+    payload = {**VALID_PAYLOAD, "access_code": "anything"}
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 401  # never matches an empty configured code
+
+
+def test_blank_access_code_still_goes_through_the_normal_review_flow(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(webapp_main, "send_email",
+                         lambda subject, html_body, to_addrs: sent.setdefault("sent", True))
+
+    payload = {**VALID_PAYLOAD, "access_code": ""}
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "received"
+    assert resp.json().get("design") is None
+    assert sent.get("sent") is True

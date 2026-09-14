@@ -54,4 +54,18 @@ SALES_EMAILS = _list_env("SALES_EMAILS", "sales@assaflex.example")
 
 # --- CORS: the website origin(s) allowed to call this API. Set to the real
 # assaflex.com domain (and any staging domain) before going live. ---
-ALLOWED_ORIGINS = _list_env("ALLOWED_ORIGINS",
+ALLOWED_ORIGINS = _list_env("ALLOWED_ORIGINS", "https://www.assaflex.example")
+
+# --- Manufacturing catalog the optimizer searches. Point this at a real,
+# maintained JSON file (see bearing_tool/catalog.py's Catalog.to_json) once
+# AssaFlex's actual manufacturing constraints replace the placeholder
+# defaults -- see the main README's Known Issues #3. ---
+CATALOG_PATH = os.environ.get("CATALOG_PATH", "")  # "" = use catalog.default_catalog()
+
+# --- Optional shared access code that lets a visitor see the computed
+# design directly on the page instead of routing it through engineering/
+# sales for review (see main.py's `access_code` handling). Deliberately no
+# non-empty default: leaving this unset disables the bypass entirely (any
+# access code typed into the form is then always rejected), rather than
+# silently falling back to a guessable placeholder value. ---
+DESIGN_ACCESS_CODE = os.environ.get("DESIGN_ACCESS_CODE", "")

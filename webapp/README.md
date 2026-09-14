@@ -1,11 +1,23 @@
 # Bearing design request — public website integration
 
 Lets a visitor on assaflex.com submit a bearing schedule through a form and
-have a preliminary design computed automatically, with the result emailed
-to engineering and sales for review — the visitor themselves never sees the
-computed numbers, only an acknowledgement. See the main project README's
-"Known issues" section for why this stays preliminary until AssaFlex's real
-manufacturing catalog replaces the placeholder one.
+have a preliminary design computed automatically. The form offers two
+paths, chosen by the visitor:
+
+- **Send for review** (the default) — the computed design is emailed to
+  engineering and sales; the visitor only ever sees an acknowledgement,
+  never the numbers. See the main project README's "Known issues" section
+  for why this stays preliminary until AssaFlex's real manufacturing
+  catalog replaces the placeholder one.
+- **I have an access code** — if the visitor enters the shared
+  `DESIGN_ACCESS_CODE` (see below), the design is shown directly on the
+  page instead, and **no email is sent at all** for that request (a
+  correct code is a trusted bypass, not just an alternate view — there is
+  deliberately no record of it beyond this). Meant for AssaFlex staff or a
+  trusted distributor who wants the number immediately rather than waiting
+  on a review. Leave `DESIGN_ACCESS_CODE` unset to disable this path
+  entirely — the form still shows the option, but any code typed in is
+  always rejected.
 
 Two pieces:
 
@@ -29,6 +41,11 @@ cp webapp/.env.example webapp/.env
 already uses to send email (Google Workspace, Microsoft 365, or a
 transactional provider like SendGrid/Postmark's SMTP relay) — no code
 changes needed, just the `.env` values.
+
+If you want the "I have an access code" bypass enabled, also set
+`DESIGN_ACCESS_CODE` to a shared secret and tell whoever should have it
+out of band (it's never shown anywhere in the UI). Leave it blank to
+disable that option.
 
 ## 2. Run locally to test
 
@@ -135,17 +152,26 @@ security plugins do this), embed the page as an `<iframe>` instead:
 
 ## What this deliberately does NOT do (yet)
 
-- **Does not show the computed design to the website visitor.** Per
-  AssaFlex's choice, the result is preliminary and goes to engineering/sales
-  for review first — the visitor only sees "your request has been
-  received."
-- **Does not store submissions anywhere** — each one only exists in the
-  notification email. Add a database (or forward a copy to a CRM/shared
-  inbox) if AssaFlex wants a running record for sales follow-up; this
-  wasn't asked for yet.
+- **Does not show the computed design to the website visitor, unless they
+  use the access-code path.** Per AssaFlex's choice, the default is that
+  the result is preliminary and goes to engineering/sales for review first
+  — the visitor only sees "your request has been received." The access
+  code is a deliberate, separate bypass of that (see above), not a way
+  around it.
+- **The access code is a single shared secret with no expiry, rotation, or
+  per-user tracking** — anyone who has it can see any schedule's computed
+  design, and there's no log of who used it (since that request path
+  skips the email entirely, by design). Fine for a small number of trusted
+  people; rotate `DESIGN_ACCESS_CODE` in Railway if it needs to be revoked.
+- **Does not store submissions anywhere** — a normal (reviewed) submission
+  only exists in the notification email, and an access-code submission
+  leaves no record at all. Add a database (or forward a copy to a CRM/
+  shared inbox) if AssaFlex wants a running record for sales follow-up;
+  this wasn't asked for yet.
 - **Does not authenticate who can submit** — it's a public form, same as
   any "contact us" form. Add a CAPTCHA (e.g. Cloudflare Turnstile) if spam
-  becomes a problem.
+  becomes a problem (this matters more now that a correct access code
+  reveals real numbers to whoever submits).
 - **Uses the placeholder manufacturing catalog** (`default_catalog()`)
   unless `CATALOG_PATH` in `.env` points at a real one — see the main
   README's Known Issues.

@@ -81,11 +81,56 @@ class SubmitterIn(BaseModel):
 class DesignRequestIn(BaseModel):
     schedule: ScheduleIn
     submitter: SubmitterIn
+    # Optional shared access code (see config.DESIGN_ACCESS_CODE). Left blank
+    # (the default), the request goes through the normal engineering/sales
+    # review flow below -- it's only ever treated as an access-code attempt
+    # when non-blank, so an unconfigured DESIGN_ACCESS_CODE can't accidentally
+    # be "matched" by an empty string.
+    access_code: str = ""
+
+
+class DesignOut(BaseModel):
+    """The computed design, returned only when a correct access code is
+    supplied -- never part of the normal (email-routed) response, since the
+    whole point of that path is that the visitor doesn't see the numbers."""
+    feasible: bool
+    message: str
+    w_mm: Optional[float] = None
+    l_mm: Optional[float] = None
+    h_mm: Optional[float] = None
+    total_elastomer_thickness_mm: Optional[float] = None
+    n: Optional[int] = None
+    ti_mm: Optional[float] = None
+    ts_mm: Optional[float] = None
+    g_n_per_mm2: Optional[float] = None
+    bearing_type: Optional[float] = None
+    plan_area_mm2: Optional[float] = None
+    total_volume_mm3: Optional[float] = None
+    feasible_count: int = 0
+    combinations_evaluated: int = 0
 
 
 class DesignRequestOut(BaseModel):
     status: str
     message: str
+    design: Optional[DesignOut] = None
+
+
+def _design_out(result) -> DesignOut:
+    if result.best is None:
+        return DesignOut(feasible=False, message=result.message,
+                          feasible_count=result.feasible_count,
+                          combinations_evaluated=result.combinations_evaluated)
+    b = result.best
+    return DesignOut(
+        feasible=True, message=result.message,
+        w_mm=b.w, l_mm=b.l, h_mm=b.result.overal_height,
+        total_elastomer_thickness_mm=b.n * b.ti,
+        n=b.n, ti_mm=b.ti, ts_mm=b.ts, g_n_per_mm2=b.g, bearing_type=b.bearing_type,
+        plan_area_mm2=b.plan_area, total_volume_mm3=b.total_volume,
+        feasible_count=result.feasible_count,
+        combinations_evaluated=result.combinations_evaluated,
+    )
 
 
 @app.post("/api/design-schedule", response_model=DesignRequestOut)
@@ -102,6 +147,21 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
         mu=payload.schedule.mu, msf=payload.schedule.msf, esl=payload.schedule.esl,
     )
 
+    access_code = payload.access_code.strip()
+    if access_code:
+        # Access-code path: reveal the design directly, skip the
+        # engineering/sales email entirely (AssaFlex's choice -- a correct
+        # code is treated as a trusted bypass, not just an alternate view).
+        if not config.DESIGN_ACCESS_CODE or access_code != config.DESIGN_ACCESS_CODE:
+            raise HTTPException(401, "Incorrect access code.")
+        result = find_optimal_design_for_schedule(schedule, _catalog)
+        return DesignRequestOut(
+            status="authorized",
+            message="Access code accepted — showing the computed design below.",
+            design=_design_out(result),
+        )
+
+    # Normal path: compute + email engineering/sales, acknowledge only.
     result = find_optimal_design_for_schedule(schedule, _catalog)
 
     submitter = Submitter(**payload.submitter.model_dump(exclude={"email"}),

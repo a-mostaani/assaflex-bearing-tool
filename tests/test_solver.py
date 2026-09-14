@@ -114,6 +114,19 @@ def test_overload_returns_infeasible_gracefully():
     assert_close(r.load_upperbound, 351086.4)
 
 
+def test_shear_deflection_exhausting_plan_dimension_returns_infeasible_gracefully():
+    # Found via the schedule optimizer's own search: capacity mode (dl=dr=
+    # dd1=dd2=0) sets max_shear_def_w = msf*n*ti, and when that lands on
+    # exactly `w` (as it does here: 0.7*25*10 == 175), Ar = A1*(1 - w/w) = 0,
+    # which every strain formula a few lines later divides by -- previously
+    # an unhandled ZeroDivisionError that crashed the public web API.
+    r = evaluate_bearing(w=175, l=775, n=25, ti=10, ts=5, g=1.15, mu=0.3,
+                          bearing_type=2, esl=0, ndd=1, nrd=1, perc1=0,
+                          perc2=0, msf=0.7, dl=0, dr=0, dd1=0, dd2=0)
+    assert not r.feasible
+    assert r.failure_reason == "shear_displacement_exceeds_plan_dimension"
+
+
 def test_type_2point5_raises_not_implemented():
     kwargs = {**COMMON, "bearing_type": 2.5}
     with pytest.raises(NotImplementedError):
