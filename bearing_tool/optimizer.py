@@ -165,25 +165,43 @@ def find_optimal_design(
                         # First pass: cheapest ts placeholder just to learn
                         # feasibility and the required min_ts (ts does not
                         # affect either the strain checks or min_ts itself).
-                        # Try msf candidates smallest (safest) first and
-                        # keep the first one that makes this geometry
-                        # feasible -- a higher msf never makes a geometry
-                        # LESS feasible, so this is the most conservative
-                        # msf that works, not an arbitrary one.
-                        probe = None
-                        chosen_msf = None
-                        for cand_msf in msf_candidates:
-                            probe = evaluate_bearing(
+                        #
+                        # Check the LARGEST (loosest) msf candidate first,
+                        # not the smallest: a geometry infeasible even at the
+                        # most permissive msf can't become feasible at a
+                        # stricter one either, so this single probe rejects
+                        # it at the same cost as before msf became
+                        # searchable. Most geometries in a real catalog are
+                        # infeasible outright (too small/thin for the load),
+                        # so checking smallest-first would pay for every
+                        # candidate on every one of those before giving up --
+                        # multiplying the whole search by len(msf_candidates)
+                        # for no benefit (this is what made the search time
+                        # out in production against the default catalog).
+                        # Only once we know a geometry passes at the loosest
+                        # value is it worth the extra calls to find the
+                        # smallest (safest) one that still works.
+                        loosest_msf = msf_candidates[-1]
+                        probe = evaluate_bearing(
+                            w=w, l=l, n=n, ti=ti, ts=catalog.ts_options[0], g=g,
+                            mu=mu, bearing_type=catalog.bearing_types[0], esl=esl,
+                            ndd=req.ndd, nrd=req.nrd, perc1=req.perc1, perc2=req.perc2,
+                            msf=loosest_msf, dl=req.dl, dr=req.dr, dd1=req.dd1, dd2=req.dd2,
+                        )
+                        if not probe.feasible:
+                            continue
+                        chosen_msf = loosest_msf
+                        for cand_msf in msf_candidates[:-1]:
+                            cand_probe = evaluate_bearing(
                                 w=w, l=l, n=n, ti=ti, ts=catalog.ts_options[0], g=g,
                                 mu=mu, bearing_type=catalog.bearing_types[0], esl=esl,
                                 ndd=req.ndd, nrd=req.nrd, perc1=req.perc1, perc2=req.perc2,
                                 msf=cand_msf, dl=req.dl, dr=req.dr, dd1=req.dd1, dd2=req.dd2,
                             )
-                            if probe.feasible:
+                            if cand_probe.feasible:
                                 chosen_msf = cand_msf
+                                probe = cand_probe
                                 break
-                        if chosen_msf is None:
-                            continue
                         feasible_count += 1
 
                         chosen_ts = _smallest_sufficient_ts(catalog, probe.min_ts)
@@ -332,13 +350,28 @@ def find_optimal_design_for_schedule(
                                 continue  # cannot possibly fit, even with the thinnest shim
                             evaluated += 1
 
-                            # Try msf candidates smallest (safest) first and
-                            # keep the first that makes this geometry pass
-                            # every combination -- see find_optimal_design's
-                            # matching comment.
-                            check = None
-                            chosen_msf = None
-                            for cand_msf in msf_candidates:
+                            # Check the loosest msf candidate first, not the
+                            # smallest -- see find_optimal_design's matching
+                            # comment for why. This matters even more here:
+                            # each check_all() call re-runs EVERY combination
+                            # in the schedule (14 for a typical real
+                            # schedule), so trying every msf candidate
+                            # smallest-first on every geometry -- most of
+                            # which are infeasible outright -- multiplied the
+                            # whole schedule search by len(msf_candidates)
+                            # and was enough to push a real submission (no
+                            # height cap given, so far more geometries reach
+                            # this point) past the public API's request
+                            # timeout in production.
+                            loosest_msf = msf_candidates[-1]
+                            check = schedule.check_all(w=w, l=l, n=n, ti=ti,
+                                                        ts=ts_min_catalog, g=g,
+                                                        bearing_type=bearing_type,
+                                                        msf=loosest_msf)
+                            if not check.feasible:
+                                continue
+                            chosen_msf = loosest_msf
+                            for cand_msf in msf_candidates[:-1]:
                                 c = schedule.check_all(w=w, l=l, n=n, ti=ti,
                                                         ts=ts_min_catalog, g=g,
                                                         bearing_type=bearing_type,
@@ -347,8 +380,6 @@ def find_optimal_design_for_schedule(
                                     check = c
                                     chosen_msf = cand_msf
                                     break
-                            if chosen_msf is None:
-                                continue
                             feasible_count += 1
 
                             chosen_ts = ts_min_catalog
