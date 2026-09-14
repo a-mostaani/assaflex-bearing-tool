@@ -129,6 +129,22 @@
     </div>
 
     <div class="af-card">
+      <h2>Minimum vertical load</h2>
+      <p class="af-intro" style="margin-top:0">
+        The lowest vertical load this bearing could plausibly see in service
+        (e.g. a "Min Vertical" case from your schedule). This decides
+        whether a friction-only (Type B) bearing is adequate or a
+        positive-fixed (Type C) one is required. Leave blank if you're not
+        sure -- the design will then assume 0&nbsp;kN, and the result will
+        say so clearly.
+      </p>
+      <div class="af-field" style="max-width:220px">
+        <label for="af-min-vertical">Minimum vertical load (kN)</label>
+        <input id="af-min-vertical" type="number" step="any">
+      </div>
+    </div>
+
+    <div class="af-card">
       <h2>Load combinations</h2>
       <p class="af-intro" style="margin-top:0">
         One row per coincident design point from your bearing schedule
@@ -256,11 +272,21 @@
     return value.toFixed(1) + (unit || "");
   }
 
+  function minVerticalNote(design) {
+    return design.min_vertical_assumed_zero
+      ? `<li>Minimum vertical load used for the Type B/Type C check:
+             <strong>0 kN (not stated -- assumed)</strong>. State a real value
+             above if you know it, especially if this came back as Type B.</li>`
+      : `<li>Minimum vertical load used for the Type B/Type C check:
+             ${fmt(design.min_vertical_kN_used, " kN")} (as you stated)</li>`;
+  }
+
   function renderDesign(design) {
     const resultEl = document.getElementById("af-design-result");
     if (!design.feasible) {
       resultEl.innerHTML = `<p style="margin:0">${design.message ||
-        "No feasible design was found for this schedule in the current catalog."}</p>`;
+        "No feasible design was found for this schedule in the current catalog."}</p>
+        <ul>${minVerticalNote(design)}</ul>`;
       resultEl.style.display = "block";
       return;
     }
@@ -273,6 +299,7 @@
         <li>n = ${design.n}, ti = ${fmt(design.ti_mm, " mm")}, ts = ${fmt(design.ts_mm, " mm")},
             g = ${design.g_n_per_mm2} N/mm&sup2;, bearing type ${design.bearing_type}</li>
         <li>Design safety factor (msf): ${design.msf ?? "—"}</li>
+        ${minVerticalNote(design)}
       </ul>
       <p style="color:#666; font-size:0.8rem; margin:10px 0 0;">
         Auto-computed by the AssaFlex bearing design tool from the schedule you entered.
@@ -313,6 +340,7 @@
         // manufacturing catalog's own msf options for the smallest value
         // that makes a feasible design possible, instead of assuming one
         // fixed safety factor (see webapp/main.py's ScheduleIn.msf).
+        min_vertical_kN: parseFloat(document.getElementById("af-min-vertical").value),
         mu: 0.3, esl: 0
       },
       submitter: {

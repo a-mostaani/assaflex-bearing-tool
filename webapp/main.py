@@ -73,6 +73,12 @@ class ScheduleIn(BaseModel):
     # it's always None here in practice, letting the catalog decide.
     msf: Optional[float] = None
     esl: int = 0
+    # The lowest vertical load this bearing could plausibly see in service
+    # (kN) -- used for the Type B (friction-only) vs Type C (positive
+    # fixing) check (see bearing_tool.schedule.BearingSchedule.
+    # min_vertical_kN). Left blank/None, the check still runs using 0 kN --
+    # the design output always says which was used, never silently skips it.
+    min_vertical_kN: Optional[float] = None
 
 
 class SubmitterIn(BaseModel):
@@ -114,6 +120,12 @@ class DesignOut(BaseModel):
     total_volume_mm3: Optional[float] = None
     feasible_count: int = 0
     combinations_evaluated: int = 0
+    # What was actually used for the Type B (friction-only) vs Type C
+    # (positive fixing) check -- always populated, whether or not a design
+    # was found, so a blank/omitted field on the request never reads as
+    # "not checked" (see ScheduleIn.min_vertical_kN).
+    min_vertical_kN_used: float = 0.0
+    min_vertical_assumed_zero: bool = False
 
 
 class DesignRequestOut(BaseModel):
@@ -126,7 +138,9 @@ def _design_out(result) -> DesignOut:
     if result.best is None:
         return DesignOut(feasible=False, message=result.message,
                           feasible_count=result.feasible_count,
-                          combinations_evaluated=result.combinations_evaluated)
+                          combinations_evaluated=result.combinations_evaluated,
+                          min_vertical_kN_used=result.min_vertical_kN_used,
+                          min_vertical_assumed_zero=result.min_vertical_assumed_zero)
     b = result.best
     return DesignOut(
         feasible=True, message=result.message,
@@ -136,6 +150,8 @@ def _design_out(result) -> DesignOut:
         msf=b.msf, plan_area_mm2=b.plan_area, total_volume_mm3=b.total_volume,
         feasible_count=result.feasible_count,
         combinations_evaluated=result.combinations_evaluated,
+        min_vertical_kN_used=result.best_check.min_vertical_kN_used,
+        min_vertical_assumed_zero=result.best_check.min_vertical_assumed_zero,
     )
 
 
@@ -151,6 +167,7 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
         max_transverse_mm=payload.schedule.max_transverse_mm,
         max_height_mm=payload.schedule.max_height_mm,
         mu=payload.schedule.mu, msf=payload.schedule.msf, esl=payload.schedule.esl,
+        min_vertical_kN=payload.schedule.min_vertical_kN,
     )
 
     access_code = payload.access_code.strip()

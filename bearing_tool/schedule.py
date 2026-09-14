@@ -119,6 +119,16 @@ class ScheduleCheckResult:
     feasible: bool
     checks: List[CombinationCheck] = field(default_factory=list)
     required_min_ts: Optional[float] = None  # max over all combinations' min_ts
+    # What check_all() actually used for the Type B anti-slip check (see
+    # BearingSchedule.min_vertical_kN) -- always populated, so a caller can
+    # show it regardless of whether the schedule stated one. When
+    # `min_vertical_assumed_zero` is True, the schedule didn't state a
+    # minimum vertical load at all and 0 was used in its place -- callers
+    # displaying a result MUST surface that (see module callers in webapp/
+    # and app.py), not just the number, since a silent 0 reads as "checked
+    # and fine" rather than "not stated."
+    min_vertical_kN_used: float = 0.0
+    min_vertical_assumed_zero: bool = False
 
     @property
     def failures(self) -> List[CombinationCheck]:
@@ -147,6 +157,21 @@ class BearingSchedule:
     msf: Optional[float] = None
     esl: int = 0
 
+    # The lowest vertical load this bearing could plausibly see in service
+    # (kN) -- e.g. from the schedule's own "Min Vertical" case -- used for
+    # the Type B (friction-only) vs Type C (positive fixing) check: Type B
+    # relies entirely on friction (mu * this value) to resist the
+    # horizontal force its own shear deformation generates, so if this is
+    # too low, Type B is rejected outright regardless of how the
+    # strain/buckling checks come out (see solver.evaluate_bearing). None
+    # (the default) means the schedule didn't state one -- check_all()
+    # still enforces the check using 0 kN in that case (the most
+    # conservative assumption, since an unstated minimum could genuinely be
+    # zero), and always reports that it did so (see
+    # ScheduleCheckResult.min_vertical_assumed_zero) rather than silently
+    # skipping the check.
+    min_vertical_kN: Optional[float] = None
+
     def check_all(self, w: float, l: float, n: int, ti: float, ts: float,
                    g: float, bearing_type: float,
                    msf: Optional[float] = None) -> ScheduleCheckResult:
@@ -160,12 +185,16 @@ class BearingSchedule:
         """
         effective_msf = msf if msf is not None else (
             self.msf if self.msf is not None else 0.7)
+        min_vertical_assumed_zero = self.min_vertical_kN is None
+        min_vertical_kN_used = self.min_vertical_kN if self.min_vertical_kN is not None else 0.0
+        min_vertical_load_n = min_vertical_kN_used * 1000.0
         checks: List[CombinationCheck] = []
         min_ts_values: List[float] = []
         for combo in self.combinations:
             kwargs = combo.to_solver_kwargs(effective_msf)
             r = evaluate_bearing(w=w, l=l, n=n, ti=ti, ts=ts, g=g, mu=self.mu,
-                                  bearing_type=bearing_type, esl=self.esl, **kwargs)
+                                  bearing_type=bearing_type, esl=self.esl,
+                                  min_vertical_load=min_vertical_load_n, **kwargs)
             checks.append(CombinationCheck(combination=combo, result=r))
             if r.min_ts is not None:
                 min_ts_values.append(r.min_ts)
@@ -173,7 +202,9 @@ class BearingSchedule:
         feasible = all(c.passed for c in checks) and bool(checks)
         required_min_ts = max(min_ts_values) if min_ts_values else None
         return ScheduleCheckResult(feasible=feasible, checks=checks,
-                                    required_min_ts=required_min_ts)
+                                    required_min_ts=required_min_ts,
+                                    min_vertical_kN_used=min_vertical_kN_used,
+                                    min_vertical_assumed_zero=min_vertical_assumed_zero)
 
     def as_dict(self) -> dict:
         """Plain-dict form of this schedule, in the shape from_json() reads back."""
@@ -185,6 +216,7 @@ class BearingSchedule:
             "mu": self.mu,
             "msf": self.msf,
             "esl": self.esl,
+            "min_vertical_kN": self.min_vertical_kN,
             "combinations": [
                 {
                     "limit_state": c.limit_state, "case": c.case,
@@ -212,6 +244,7 @@ class BearingSchedule:
             max_transverse_mm=data.get("max_transverse_mm"),
             max_height_mm=data.get("max_height_mm"),
             mu=data.get("mu", 0.3), msf=data.get("msf"), esl=data.get("esl", 0),
+            min_vertical_kN=data.get("min_vertical_kN"),
         )
 
     @classmethod

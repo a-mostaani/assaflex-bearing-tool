@@ -69,6 +69,13 @@ class DesignRequirement:
     perc2: float = 0.0  # transverse/longitudinal rotation ratio (if nrd=2)
     label: str = ""  # optional identifier, e.g. a client's row/support number
 
+    # The lowest vertical load this bearing could plausibly see in service
+    # (kN) -- for the Type B vs Type C anti-slip check, see
+    # bearing_tool.schedule.BearingSchedule.min_vertical_kN (same concept,
+    # same "None = not stated, so 0 is assumed and always reported" rule --
+    # see find_optimal_design below and BearingResult.min_vertical_load).
+    min_vertical_kN: Optional[float] = None
+
 
 @dataclass
 class Candidate:
@@ -103,6 +110,11 @@ class OptimizationResult:
     combinations_evaluated: int = 0
     feasible_count: int = 0
     message: str = ""
+    # What was actually used for the Type B anti-slip check (see
+    # DesignRequirement.min_vertical_kN) -- populated on every result, so a
+    # caller can always show it, not just when a design was found.
+    min_vertical_kN_used: float = 0.0
+    min_vertical_assumed_zero: bool = False
 
 
 def _smallest_sufficient_ts(catalog: Catalog, min_ts: float) -> Optional[float]:
@@ -130,6 +142,11 @@ def find_optimal_design(
     mu = catalog.mu if mu is None else mu
     esl = catalog.esl if esl is None else esl
     msf_candidates = [msf] if msf is not None else sorted(catalog.msf_options)
+    # See DesignRequirement.min_vertical_kN -- None means not stated, and
+    # per Ash, that's enforced as 0 kN (the conservative assumption) rather
+    # than skipped; OptimizationResult.message says so explicitly when it
+    # applies (see the "no design" / "found" messages below).
+    min_vertical_load_n = (req.min_vertical_kN if req.min_vertical_kN is not None else 0.0) * 1000.0
 
     plan_values = catalog.plan_values()
     n_values = catalog.n_values()
@@ -209,12 +226,21 @@ def find_optimal_design(
                             continue  # no catalog shim is thick enough
 
                         for bearing_type in catalog.bearing_types:
+                            # min_vertical_load is deliberately omitted from
+                            # the msf-search probes above (they run against
+                            # a placeholder bearing_type before the real one
+                            # is known -- see this module's docstring) and
+                            # only applied here, on the real bearing_type,
+                            # so the anti-slip check can correctly reject
+                            # Type B for a geometry while still finding it
+                            # feasible via Type C.
                             final = evaluate_bearing(
                                 w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
                                 mu=mu, bearing_type=bearing_type, esl=esl,
                                 ndd=req.ndd, nrd=req.nrd, perc1=req.perc1,
                                 perc2=req.perc2, msf=chosen_msf, dl=req.dl, dr=req.dr,
                                 dd1=req.dd1, dd2=req.dd2,
+                                min_vertical_load=min_vertical_load_n,
                             )
                             if not final.feasible or not final.ts_ok:
                                 continue
@@ -227,15 +253,22 @@ def find_optimal_design(
                             top.sort(key=lambda c: c.total_volume)
                             del top[top_n:]
 
+    min_vertical_assumed_zero = req.min_vertical_kN is None
+    min_vertical_kN_used = min_vertical_load_n / 1000.0
+
     if not top:
         return OptimizationResult(
             requirement=req,
             combinations_evaluated=evaluated,
             feasible_count=feasible_count,
+            min_vertical_kN_used=min_vertical_kN_used,
+            min_vertical_assumed_zero=min_vertical_assumed_zero,
             message=(
                 "No design in the catalog satisfies this requirement. Widen the "
                 "catalog (larger plan_max, more ti/n options) or double-check the "
                 "requirement values."
+                + (" (No minimum vertical load was stated -- 0 kN was assumed "
+                   "for the Type B/Type C check.)" if min_vertical_assumed_zero else "")
             ),
         )
 
@@ -246,7 +279,13 @@ def find_optimal_design(
         alternatives=top[1:],
         combinations_evaluated=evaluated,
         feasible_count=feasible_count,
-        message=f"Found {feasible_count} feasible design(s) out of {evaluated:,} evaluated.",
+        min_vertical_kN_used=min_vertical_kN_used,
+        min_vertical_assumed_zero=min_vertical_assumed_zero,
+        message=(
+            f"Found {feasible_count} feasible design(s) out of {evaluated:,} evaluated."
+            + (" No minimum vertical load was stated -- 0 kN was assumed for the "
+               "Type B/Type C check." if min_vertical_assumed_zero else "")
+        ),
     )
 
 
@@ -266,6 +305,14 @@ class ScheduleOptimizationResult:
     combinations_evaluated: int = 0  # geometries tried (not schedule rows)
     feasible_count: int = 0
     message: str = ""
+    # Mirrors OptimizationResult's fields of the same name -- populated even
+    # when no design was found, so a caller can always show what was used
+    # for the Type B anti-slip check (see BearingSchedule.min_vertical_kN).
+    # `best_check.min_vertical_kN_used`/`.min_vertical_assumed_zero` carry
+    # the same information when a design WAS found; these are here so it's
+    # available without a `best_check` too.
+    min_vertical_kN_used: float = 0.0
+    min_vertical_assumed_zero: bool = False
 
 
 def _analytic_min_height(n: int, ti: float, ts: float, bearing_type: float) -> Optional[float]:
@@ -416,15 +463,24 @@ def find_optimal_design_for_schedule(
                             top = [top[i] for i in order][:top_n]
                             top_checks = [top_checks[i] for i in order][:top_n]
 
+    schedule_min_vertical_assumed_zero = schedule.min_vertical_kN is None
+    schedule_min_vertical_kN_used = (
+        schedule.min_vertical_kN if schedule.min_vertical_kN is not None else 0.0
+    )
+
     if not top:
         return ScheduleOptimizationResult(
             schedule_label=schedule.label,
             combinations_evaluated=evaluated,
             feasible_count=feasible_count,
+            min_vertical_kN_used=schedule_min_vertical_kN_used,
+            min_vertical_assumed_zero=schedule_min_vertical_assumed_zero,
             message=(
                 "No design in the catalog satisfies every combination in this "
                 "schedule within its envelope. Widen the catalog (more ti/n/g "
                 "options) or double-check the schedule values."
+                + (" (No minimum vertical load was stated -- 0 kN was assumed "
+                   "for the Type B/Type C check.)" if schedule_min_vertical_assumed_zero else "")
             ),
         )
 
@@ -435,7 +491,13 @@ def find_optimal_design_for_schedule(
         alternatives=top[1:],
         combinations_evaluated=evaluated,
         feasible_count=feasible_count,
-        message=f"Found {feasible_count} design(s) satisfying all "
-                f"{len(schedule.combinations)} combinations, out of {evaluated:,} "
-                f"geometries tried.",
+        min_vertical_kN_used=schedule_min_vertical_kN_used,
+        min_vertical_assumed_zero=schedule_min_vertical_assumed_zero,
+        message=(
+            f"Found {feasible_count} design(s) satisfying all "
+            f"{len(schedule.combinations)} combinations, out of {evaluated:,} "
+            f"geometries tried."
+            + (" No minimum vertical load was stated -- 0 kN was assumed for the "
+               "Type B/Type C check." if schedule_min_vertical_assumed_zero else "")
+        ),
     )

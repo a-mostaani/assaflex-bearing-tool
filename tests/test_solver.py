@@ -137,3 +137,51 @@ def test_invalid_type_raises_value_error():
     kwargs = {**COMMON, "bearing_type": 99}
     with pytest.raises(ValueError):
         evaluate_bearing(**kwargs, dl=0, dr=0, dd1=0, dd2=0)
+
+
+# ---------------------------------------------------------------------------
+# Type B (friction-only) vs Type C (positive fixing): a Type B bearing is
+# only adequate if friction (mu * the lowest vertical load it'll ever see)
+# can resist the horizontal force its own shear deformation generates
+# (BearingResult.min_load) -- see the module docstring's "min_vertical_load"
+# parameter. Per Ash: this must be enforced as a real feasibility check, not
+# just reported.
+# ---------------------------------------------------------------------------
+
+def test_insufficient_min_vertical_load_rejects_type_b():
+    # From test_capacity_mode_both_free: this exact COMMON call has
+    # min_load=466666.6667 N -- a stated minimum vertical load below that
+    # can't satisfy friction alone.
+    r = evaluate_bearing(**COMMON, dl=0, dr=0, dd1=0, dd2=0,
+                          min_vertical_load=400_000)
+    assert not r.feasible
+    assert r.failure_reason == "insufficient_min_vertical_load_for_type_b"
+    assert r.min_vertical_load == 400_000
+    assert any("Type C" in w for w in r.warnings)
+
+
+def test_sufficient_min_vertical_load_leaves_type_b_feasible():
+    r = evaluate_bearing(**COMMON, dl=0, dr=0, dd1=0, dd2=0,
+                          min_vertical_load=500_000)
+    assert r.feasible
+    assert r.min_vertical_load == 500_000
+
+
+def test_type_c_is_not_subject_to_the_min_vertical_load_check():
+    # Same insufficient value that rejects Type B above -- Type C doesn't
+    # rely on friction to prevent sliding, so it must be unaffected.
+    kwargs = {**COMMON, "bearing_type": 3}
+    r = evaluate_bearing(**kwargs, dl=0, dr=0, dd1=0, dd2=0,
+                          min_vertical_load=400_000)
+    assert r.feasible
+
+
+def test_min_vertical_load_none_skips_the_check_entirely():
+    # Backward compatibility: callers that don't pass min_vertical_load at
+    # all (e.g. direct solver use, or the optimizer's msf-search probes,
+    # which run against a placeholder bearing_type -- see optimizer.py) get
+    # the pre-existing behaviour, unaffected by how low a real min vertical
+    # load might be.
+    r = evaluate_bearing(**COMMON, dl=0, dr=0, dd1=0, dd2=0)
+    assert r.feasible
+    assert r.min_vertical_load is None

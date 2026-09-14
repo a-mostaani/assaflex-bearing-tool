@@ -148,3 +148,27 @@ def test_blank_access_code_still_goes_through_the_normal_review_flow(monkeypatch
     assert resp.json()["status"] == "received"
     assert resp.json().get("design") is None
     assert sent.get("sent") is True
+
+
+def test_design_out_reports_min_vertical_assumed_zero_when_not_stated(monkeypatch):
+    from webapp import config
+    monkeypatch.setattr(config, "DESIGN_ACCESS_CODE", "let-me-in")
+
+    # VALID_PAYLOAD's schedule states no min_vertical_kN.
+    payload = {**VALID_PAYLOAD, "access_code": "let-me-in"}
+    resp = client.post("/api/design-schedule", json=payload)
+    design = resp.json()["design"]
+    assert design["min_vertical_assumed_zero"] is True
+    assert design["min_vertical_kN_used"] == 0.0
+
+
+def test_design_out_reports_a_stated_min_vertical_kN(monkeypatch):
+    from webapp import config
+    monkeypatch.setattr(config, "DESIGN_ACCESS_CODE", "let-me-in")
+
+    schedule = {**VALID_PAYLOAD["schedule"], "min_vertical_kN": 500}
+    payload = {**VALID_PAYLOAD, "schedule": schedule, "access_code": "let-me-in"}
+    resp = client.post("/api/design-schedule", json=payload)
+    design = resp.json()["design"]
+    assert design["min_vertical_assumed_zero"] is False
+    assert design["min_vertical_kN_used"] == 500

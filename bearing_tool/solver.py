@@ -132,6 +132,13 @@ class BearingResult:
     total_volume: Optional[float] = None  # plan_area * overal_height
     ks_used: Optional[float] = None  # EN 1337-3 Table 4 restoring moment factor actually used
 
+    # The minimum design vertical load (N) actually used for the Type B
+    # anti-slip check below -- echoed here (rather than only living in the
+    # caller's own bookkeeping) so any result is self-describing about what
+    # was checked. None means the check wasn't requested at all (see
+    # `min_vertical_load` on evaluate_bearing).
+    min_vertical_load: Optional[float] = None
+
 
 def evaluate_bearing(
     w: float,
@@ -152,6 +159,7 @@ def evaluate_bearing(
     dr: float = 0,
     dd1: float = 0,
     dd2: float = 0,
+    min_vertical_load: Optional[float] = None,
 ) -> BearingResult:
     """Evaluate a reinforced elastomeric bearing against EN 1337-3.
 
@@ -163,6 +171,21 @@ def evaluate_bearing(
     Set ``dl``/``dr``/``dd1``/``dd2`` to 0 to ask "what is the maximum this
     bearing can take", or to a nonzero design demand to ask "does this bearing
     satisfy this demand".
+
+    ``min_vertical_load`` (N) is a separate concept from ``dl``: it's the
+    lowest vertical load this bearing could plausibly see in service (e.g. a
+    schedule's own "Min Vertical" case), used only for the Type B anti-slip
+    check below -- not the design load used for the strain/buckling checks
+    above. Leave it ``None`` to skip that check entirely (e.g. when a caller
+    only cares about strain/buckling feasibility, independent of bearing
+    type -- see optimizer.py's msf-search probes, which deliberately do this
+    since they run against a placeholder bearing_type before the real one is
+    known). Callers that DO care about Type B vs Type C (bearing_tool.schedule
+    and the schedule/single-requirement optimizers) always pass a concrete
+    number -- 0.0 when the caller has no stated minimum, per Ash: "if there
+    was no mention of min load clearly state in the design output that a min
+    load of 0 is considered" -- never silently skip the check just because
+    no value was given.
     """
     res = BearingResult()
 
@@ -482,5 +505,28 @@ def evaluate_bearing(
     ):
         res.feasible = False
         res.failure_reason = "strain_exceeds_limit"
+
+    # Type B vs Type C: a Type B (friction-only) bearing relies entirely on
+    # friction (mu * the lowest vertical load this bearing will ever see) to
+    # keep it from sliding under the horizontal force its own shear
+    # deformation generates (`min_load` above -- the vertical load friction
+    # alone would need). If the stated minimum vertical load can't cover
+    # that, Type B is not an option here at all, regardless of how the
+    # strain/buckling checks came out -- only Type C (positive/dowelled
+    # fixing, which doesn't depend on friction) is. This never applies to
+    # Type C itself.
+    res.min_vertical_load = min_vertical_load
+    if bearing_type == 2 and min_vertical_load is not None and min_load is not None:
+        if min_vertical_load < min_load:
+            res.warnings.append(
+                f"Minimum vertical load ({min_vertical_load / 1000:.1f} kN) is below "
+                f"what friction alone (mu={mu}) needs to resist this design's "
+                f"horizontal shear demand ({min_load / 1000:.1f} kN required) -- "
+                "Type B (friction-only) is not adequate here; Type C (positive "
+                "fixing) is required instead."
+            )
+            if res.feasible:
+                res.feasible = False
+                res.failure_reason = "insufficient_min_vertical_load_for_type_b"
 
     return res

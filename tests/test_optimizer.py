@@ -109,3 +109,48 @@ def test_explicit_msf_override_pins_a_single_value_not_a_search():
     res = find_optimal_design(req, SMALL_CATALOG, msf=0.7)
     assert res.best is not None
     assert res.best.msf == 0.7
+
+
+# ---------------------------------------------------------------------------
+# min_vertical_kN / Type B anti-slip check (see solver.evaluate_bearing's
+# min_vertical_load and DesignRequirement.min_vertical_kN). The important
+# thing to prove here isn't just that the check rejects Type B -- it's that
+# it does so WITHOUT wrongly rejecting the whole geometry, since the
+# msf-search probes run against a placeholder bearing_type
+# (catalog.bearing_types[0]) before the real one is tried (see
+# find_optimal_design's comments).
+# ---------------------------------------------------------------------------
+
+def test_zero_min_vertical_load_rejects_type_b_but_finds_type_c():
+    # A pure-rotation demand with no vertical load at all: friction has
+    # nothing to work with, so Type B (bearing_type=2, this catalog's first
+    # and therefore the probe's placeholder type) must be rejected for
+    # every geometry, yet Type C should still be found -- proving the
+    # rejection doesn't also throw away geometries that ARE feasible via
+    # Type C.
+    req = DesignRequirement(dl=0, dr=0.006, dd1=0, dd2=0, min_vertical_kN=0)
+    res = find_optimal_design(req, SMALL_CATALOG)
+    assert res.best is not None
+    assert res.best.bearing_type == 3
+    assert all(c.bearing_type == 3 for c in [res.best] + res.alternatives)
+    assert res.min_vertical_assumed_zero is False  # explicitly given as 0, not defaulted
+    assert res.min_vertical_kN_used == 0.0
+
+
+def test_unstated_min_vertical_load_is_assumed_zero_and_reported():
+    req = DesignRequirement(dl=250_000, dr=0.006, dd1=12, dd2=0)  # min_vertical_kN left at default None
+    res = find_optimal_design(req, SMALL_CATALOG)
+    assert res.min_vertical_assumed_zero is True
+    assert res.min_vertical_kN_used == 0.0
+    assert "0 kN was assumed" in res.message
+
+
+def test_sufficient_min_vertical_load_keeps_type_b_available():
+    # Same pure-rotation demand as above, but now with enough stated
+    # minimum vertical load that friction alone should cover it -- Type B
+    # must become available again (and, being the cheaper/thinner type,
+    # should win).
+    req = DesignRequirement(dl=0, dr=0.006, dd1=0, dd2=0, min_vertical_kN=2_000)
+    res = find_optimal_design(req, SMALL_CATALOG)
+    assert res.best is not None
+    assert res.best.bearing_type == 2

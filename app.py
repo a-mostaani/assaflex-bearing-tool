@@ -121,6 +121,20 @@ with tab_solver:
         perc2 = st.number_input("perc2 — transverse/longitudinal rotation ratio", min_value=0.0, max_value=1.0,
                                  value=0.3 if nrd == 2 else 0.0, step=0.05, disabled=(nrd == 1))
         msf = st.number_input("msf — manufacturing safety factor", min_value=0.01, max_value=1.0, value=0.7, step=0.05)
+        check_min_vertical = st.checkbox(
+            "Check minimum vertical load (Type B vs Type C)", value=False,
+            help="Rejects bearing_type=2 (Type B) outright if the stated "
+                 "minimum vertical load can't satisfy friction alone against "
+                 "this scenario's shear demand -- see 'Min load (no slip)' "
+                 "below. Off by default here so this raw solver tab keeps "
+                 "matching the original tool's behaviour exactly unless you "
+                 "opt in; the Optimal Design and Schedule tabs enforce this "
+                 "check by default.",
+        )
+        min_vertical_kN = st.number_input(
+            "Minimum vertical load (kN)", min_value=0.0, value=0.0, step=10.0,
+            disabled=not check_min_vertical,
+        )
 
     with col3:
         st.markdown("**Design demand (0 = solve for it)**")
@@ -135,6 +149,7 @@ with tab_solver:
                 w=w, l=l, n=int(n), ti=ti, ts=ts, g=g, mu=mu, bearing_type=bearing_type,
                 esl=esl, ndd=ndd, nrd=nrd, perc1=perc1, perc2=perc2, msf=msf,
                 dl=dl, dr=dr, dd1=dd1, dd2=dd2,
+                min_vertical_load=min_vertical_kN * 1000.0 if check_min_vertical else None,
             )
         except (NotImplementedError, ValueError) as e:
             st.error(str(e))
@@ -215,6 +230,19 @@ with tab_optimizer:
                                      value=0.3 if req_nrd == 2 else 0.0, step=0.05,
                                      disabled=(req_nrd == 1), key="opt_perc2")
 
+        req_state_min_vertical = st.checkbox(
+            "State a minimum vertical load", value=False, key="opt_state_min_vertical",
+            help="The lowest vertical load this bearing could plausibly see in "
+                 "service -- decides whether a friction-only Type B bearing is "
+                 "adequate or a positive-fixed Type C one is required (see "
+                 "min_load in the Performance Solver tab). Leave unchecked and "
+                 "0 kN is assumed -- the result will say so.",
+        )
+        req_min_vertical_kN = st.number_input(
+            "Minimum vertical load (kN)", min_value=0.0, value=0.0, step=10.0,
+            disabled=not req_state_min_vertical, key="opt_min_vertical_kN",
+        )
+
     with cat_col:
         st.markdown("**Manufacturing catalog** (editable — keep these matched to your real process)")
         cat: Catalog = st.session_state.catalog
@@ -272,6 +300,7 @@ with tab_optimizer:
         req = DesignRequirement(
             dl=req_dl, dr=req_dr, dd1=req_dd1, dd2=req_dd2,
             ndd=req_ndd, nrd=req_nrd, perc1=req_perc1, perc2=req_perc2, label=label,
+            min_vertical_kN=req_min_vertical_kN if req_state_min_vertical else None,
         )
         with st.spinner(f"Searching {cat.estimated_combinations():,} candidate designs…"):
             result = find_optimal_design(req, cat)
@@ -288,6 +317,14 @@ with tab_optimizer:
                 f"(total internal elastomer thickness = {total_ti:.1f} mm) — "
                 f"n={b.n}, ti={b.ti} mm, ts={b.ts} mm, g={b.g} N/mm², type {b.bearing_type}, msf={b.msf}"
             )
+            if result.min_vertical_assumed_zero:
+                st.caption(
+                    "⚠️ No minimum vertical load was stated — 0 kN was assumed for the "
+                    "Type B (friction-only) vs Type C (positive fixing) check."
+                )
+            else:
+                st.caption(f"Minimum vertical load used for the Type B/Type C check: "
+                           f"{result.min_vertical_kN_used:.1f} kN (as stated).")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Plan area", f"{b.plan_area:,.0f} mm²")
             m2.metric("Overall height", f"{b.result.overal_height:.1f} mm")
@@ -360,13 +397,14 @@ with tab_schedule:
                     max_transverse_mm=raw.get("max_transverse_mm"),
                     max_height_mm=raw.get("max_height_mm"),
                     mu=raw.get("mu", 0.3), msf=raw.get("msf", 0.7), esl=raw.get("esl", 0),
+                    min_vertical_kN=raw.get("min_vertical_kN"),
                 )
             st.session_state.schedule_df = pd.DataFrame([
                 {col: getattr(c, col) for col in SCHEDULE_COLUMNS} for c in sched.combinations
             ])
             st.session_state.schedule_envelope = (
                 sched.max_longitudinal_mm, sched.max_transverse_mm, sched.max_height_mm,
-                sched.mu, sched.msf, sched.esl,
+                sched.mu, sched.msf, sched.esl, sched.min_vertical_kN,
             )
             st.success(f"Loaded schedule: {sched.label or '(no label)'} — "
                        f"{len(sched.combinations)} combination(s)")
@@ -403,7 +441,7 @@ with tab_schedule:
         key="schedule_editor",
     )
 
-    default_env = st.session_state.get("schedule_envelope", (450.0, 600.0, 100.0, 0.3, 0.7, 0))
+    default_env = st.session_state.get("schedule_envelope", (450.0, 600.0, 100.0, 0.3, 0.7, 0, None))
     e1, e2, e3, e4, e5, e6 = st.columns(6)
     env_max_long = e1.number_input("Max longitudinal (mm)", value=float(default_env[0] or 0), min_value=0.0)
     env_max_trans = e2.number_input("Max transverse (mm)", value=float(default_env[1] or 0), min_value=0.0)
@@ -419,6 +457,21 @@ with tab_schedule:
     )
     env_msf = e5.number_input("msf", value=float(default_env[4]), step=0.05, disabled=search_msf)
     env_esl = st.selectbox("esl", options=[0, 1], index=int(default_env[5]))
+
+    default_min_vertical = default_env[6] if len(default_env) > 6 else None
+    mv_col1, mv_col2 = st.columns([1, 1])
+    env_state_min_vertical = mv_col1.checkbox(
+        "State a minimum vertical load", value=default_min_vertical is not None,
+        help="The lowest vertical load this bearing could plausibly see in "
+             "service (e.g. a schedule's own 'Min Vertical' row) -- decides "
+             "whether a friction-only Type B bearing is adequate or a "
+             "positive-fixed Type C one is required. Leave unchecked and "
+             "0 kN is assumed -- the result will say so clearly.",
+    )
+    env_min_vertical_kN = mv_col2.number_input(
+        "Minimum vertical load (kN)", value=float(default_min_vertical or 0), min_value=0.0,
+        step=10.0, disabled=not env_state_min_vertical,
+    )
 
     dl_col, ul_col = st.columns(2)
     with ul_col:
@@ -440,6 +493,7 @@ with tab_schedule:
                 max_longitudinal_mm=env_max_long or None, max_transverse_mm=env_max_trans or None,
                 max_height_mm=env_max_height or None, mu=env_mu,
                 msf=None if search_msf else env_msf, esl=env_esl,
+                min_vertical_kN=env_min_vertical_kN if env_state_min_vertical else None,
             )
 
         schedule_json_bytes = (
@@ -477,6 +531,14 @@ with tab_schedule:
                     st.caption(f"msf was searched (catalog options: "
                                f"{', '.join(str(v) for v in cat.msf_options)}) — "
                                f"{b.msf} was the smallest value that made this design feasible.")
+                if result.best_check.min_vertical_assumed_zero:
+                    st.caption(
+                        "⚠️ No minimum vertical load was stated — 0 kN was assumed for the "
+                        "Type B (friction-only) vs Type C (positive fixing) check."
+                    )
+                else:
+                    st.caption(f"Minimum vertical load used for the Type B/Type C check: "
+                               f"{result.best_check.min_vertical_kN_used:.1f} kN (as stated).")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Plan area", f"{b.plan_area:,.0f} mm²")
                 m2.metric("Overall height", f"{b.result.overal_height:.1f} mm")

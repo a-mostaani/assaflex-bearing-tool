@@ -106,8 +106,17 @@ def test_check_all_matches_individual_evaluate_bearing_calls():
 
     for check in result.checks:
         kwargs = check.combination.to_solver_kwargs(used_msf)
+        # This schedule also states no min_vertical_kN, so check_all() used
+        # 0 kN for the Type B anti-slip check (see
+        # ScheduleCheckResult.min_vertical_assumed_zero) -- pass that same
+        # value through here, or a row where friction alone genuinely isn't
+        # enough would (correctly) come back infeasible from check_all but
+        # feasible from this bare direct call, which skips the check
+        # entirely when min_vertical_load isn't given.
         direct = evaluate_bearing(w=w, l=l, n=n, ti=ti, ts=ts, g=g, mu=sched.mu,
-                                   bearing_type=bt, esl=sched.esl, **kwargs)
+                                   bearing_type=bt, esl=sched.esl,
+                                   min_vertical_load=result.min_vertical_kN_used * 1000.0,
+                                   **kwargs)
         assert direct.feasible == check.passed
         assert direct.total_strain_i == check.result.total_strain_i
 
@@ -191,3 +200,46 @@ def test_json_round_trip(tmp_path):
     reloaded = BearingSchedule.from_json(out)
     assert len(reloaded.combinations) == len(sched.combinations)
     assert reloaded.max_longitudinal_mm == sched.max_longitudinal_mm
+
+
+# ---------------------------------------------------------------------------
+# min_vertical_kN / Type B anti-slip check (see solver.evaluate_bearing's
+# min_vertical_load and BearingSchedule.min_vertical_kN).
+# ---------------------------------------------------------------------------
+
+def test_check_all_assumes_zero_min_vertical_when_not_stated():
+    sched = BearingSchedule(
+        combinations=[LoadCombination(limit_state="ULS", case="Max Vertical",
+                                       vertical_kN=1150, rotation_mrad=6.67)],
+    )
+    result = sched.check_all(w=400, l=550, n=8, ti=10, ts=4, g=1.0, bearing_type=2)
+    assert result.min_vertical_assumed_zero
+    assert result.min_vertical_kN_used == 0.0
+
+
+def test_check_all_uses_a_stated_min_vertical_kN():
+    sched = BearingSchedule(
+        combinations=[LoadCombination(limit_state="ULS", case="Max Vertical",
+                                       vertical_kN=1150, rotation_mrad=6.67)],
+        min_vertical_kN=500,
+    )
+    result = sched.check_all(w=400, l=550, n=8, ti=10, ts=4, g=1.0, bearing_type=2)
+    assert not result.min_vertical_assumed_zero
+    assert result.min_vertical_kN_used == 500
+
+
+def test_an_unstated_min_vertical_can_reject_type_b_but_not_type_c():
+    # A pure-rotation demand with no coincident vertical load stated
+    # anywhere in the schedule -- min_vertical_kN defaults to 0, which
+    # can't satisfy friction against any nonzero shear demand, so Type B
+    # must be rejected while Type C stays available.
+    sched = BearingSchedule(
+        combinations=[LoadCombination(limit_state="ULS", case="Max Rotation",
+                                       vertical_kN=0, rotation_mrad=6.67)],
+    )
+    type_b = sched.check_all(w=400, l=550, n=8, ti=10, ts=4, g=1.0, bearing_type=2)
+    type_c = sched.check_all(w=400, l=550, n=8, ti=10, ts=4, g=1.0, bearing_type=3)
+    assert not type_b.feasible
+    assert any(c.result.failure_reason == "insufficient_min_vertical_load_for_type_b"
+               for c in type_b.checks)
+    assert type_c.feasible
