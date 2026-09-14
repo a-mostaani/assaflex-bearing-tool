@@ -191,9 +191,6 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-# Uncomment to have this backend also serve the form page itself (useful if
-# your WordPress setup embeds it via <iframe> instead of a Custom HTML
-# block -- see webapp/README.md):
-#
-# from fastapi.staticfiles import StaticFiles
-# app.mount("/static", StaticFiles(directory="webapp/static"), name="static")
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/static", StaticFiles(directory="webapp/static"), name="static")
