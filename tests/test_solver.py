@@ -48,6 +48,14 @@ def test_capacity_mode_both_free():
     assert_close(r.ks_used, 79.06315789473685)
     assert_close(r.Max_moment, 322102806.8427868)
     assert_close(r.overal_height, 86)
+    # max_hor_f (AssaFlex's "Rxy") = A*g*max_vec_shear_def/Tq -- min_load is
+    # this same quantity divided by mu, so the two must be exactly related.
+    assert_close(r.max_hor_f, r.min_load * COMMON["mu"])
+    # buckling_load_capacity is captured before the strain-convergence loop
+    # narrows max_load down further, so it can only be >= the final max_load
+    # (both free) -- see the module docstring on where each is captured.
+    assert r.buckling_load_capacity is not None
+    assert r.buckling_load_capacity >= r.max_load
 
 
 def test_check_mode_both_given():
@@ -64,6 +72,12 @@ def test_check_mode_both_given():
     assert_close(r.Max_force_exerted, 50000)
     assert_close(r.Max_moment, 163288035.2336573)  # see Ks note above
     assert_close(r.overal_height, 86)
+    assert_close(r.max_hor_f, r.min_load * COMMON["mu"])
+    # Here buckling_load_capacity is captured in the dl!=0 branch, sharing
+    # its first term with the final load_upperbound but combined via max()
+    # instead of min() -- so it can only be >= the final load_upperbound.
+    assert r.buckling_load_capacity is not None
+    assert r.buckling_load_capacity >= r.load_upperbound
 
 
 def test_rotation_free_mode():
@@ -86,6 +100,20 @@ def test_load_free_mode():
     assert_close(r.max_ang_w, 0.006)
     assert_close(r.rot_upperbound, 0.02377658969)
     assert_close(r.Max_moment, 122466026.42524298)  # see Ks note above
+
+
+def test_msf_above_one_is_rejected():
+    # Per Ash: cap msf at 1.0 everywhere -- EN 1337-3's own strain/
+    # displacement limits are msf=1.0's full stated allowance, so anything
+    # above that (e.g. AssaFlex's own calculation documents have used
+    # msf=1.1) is refused here rather than silently allowed through.
+    with pytest.raises(ValueError):
+        evaluate_bearing(**{**COMMON, "msf": 1.1}, dl=0, dr=0, dd1=0, dd2=0)
+
+
+def test_msf_exactly_one_is_allowed():
+    r = evaluate_bearing(**{**COMMON, "msf": 1.0}, dl=0, dr=0, dd1=0, dd2=0)
+    assert r.feasible
 
 
 def test_type3_ndd2():

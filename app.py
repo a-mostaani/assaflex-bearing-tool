@@ -21,12 +21,15 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from bearing_tool.calc_document import build_calculation_document
 from bearing_tool.catalog import Catalog, default_catalog
 from bearing_tool.optimizer import (
     DesignRequirement,
     find_optimal_design,
     find_optimal_design_for_schedule,
 )
+from bearing_tool.render_html import render_calculation_document_html
+from bearing_tool.render_pdf import render_calculation_document_pdf
 from bearing_tool.schedule import BearingSchedule, LoadCombination
 from bearing_tool.solver import evaluate_bearing
 
@@ -48,6 +51,36 @@ def _example_schedule_df() -> pd.DataFrame:
     return pd.DataFrame([
         {col: getattr(c, col) for col in SCHEDULE_COLUMNS} for c in sched.combinations
     ])
+
+
+def _render_calc_document_section(
+    w: float, l: float, n: int, ti: float, ts: float, g: float, mu: float,
+    bearing_type: float, msf: float, esl: int, *, key_prefix: str,
+) -> None:
+    """Shared "AssaFlex Calculation Document" section -- the branded report
+    (parameters + mechanical properties + capacity surface + PDF download),
+    reused identically across all three tabs. Always solves the bearing's own
+    full envelope ("both free" mode) for this geometry, independent of
+    whatever specific design demand a tab's own controls checked."""
+    with st.expander("📄 AssaFlex Calculation Document", expanded=False):
+        client_name = st.text_input("Client name (optional)", value="", key=f"{key_prefix}_client")
+        project_name = st.text_input("Project name (optional)", value="", key=f"{key_prefix}_project")
+
+        if st.button("Generate calculation document", key=f"{key_prefix}_generate"):
+            with st.spinner("Building calculation document…"):
+                doc = build_calculation_document(
+                    w=w, l=l, n=n, ti=ti, ts=ts, g=g, mu=mu, bearing_type=bearing_type,
+                    msf=msf, esl=esl, client_name=client_name, project_name=project_name,
+                )
+                html = render_calculation_document_html(doc)
+                pdf_bytes = render_calculation_document_pdf(doc)
+            st.components.v1.html(html, height=1600, scrolling=True)
+            st.download_button(
+                "⬇️ Download PDF", data=pdf_bytes,
+                file_name=f"assaflex_calculation_document_{w:.0f}x{l:.0f}.pdf",
+                mime="application/pdf", key=f"{key_prefix}_download",
+            )
+
 
 st.set_page_config(page_title="AssaFlex Bearing Design Tool", layout="wide")
 
@@ -133,7 +166,7 @@ with tab_solver:
         )
         min_vertical_kN = st.number_input(
             "Minimum vertical load (kN)", min_value=0.0, value=0.0, step=10.0,
-            disabled=not check_min_vertical,
+            disabled=not check_min_vertical, key="solver_min_vertical_kN",
         )
 
     with col3:
@@ -196,6 +229,15 @@ with tab_solver:
                 with st.expander("Messages", expanded=False):
                     for msg in r.warnings:
                         st.write("• " + msg)
+
+    # Outside the button block (not gated on "Evaluate" having been clicked)
+    # so this section's own widgets don't reset the block above on rerun --
+    # it re-solves its own full envelope from the geometry inputs above,
+    # independent of whatever design demand was checked with "Evaluate".
+    _render_calc_document_section(
+        w=w, l=l, n=int(n), ti=ti, ts=ts, g=g, mu=mu, bearing_type=bearing_type,
+        msf=msf, esl=esl, key_prefix="solver",
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -266,13 +308,17 @@ with tab_optimizer:
         cat.g_options = [float(x) for x in g_text.split(",") if x.strip()]
 
         msf_text = st.text_input(
-            "msf options (comma-separated) — how much of EN 1337-3's max "
-            "permitted strain/movement capacity to allow; the optimizer "
-            "tries these smallest-first and uses the smallest one that "
-            "makes each candidate geometry feasible",
+            "msf options (comma-separated, capped at 1.0 — EN 1337-3's own "
+            "full stated allowance) — how much of that permitted strain/"
+            "movement capacity to allow; the optimizer tries these "
+            "smallest-first and uses the smallest one that makes each "
+            "candidate geometry feasible",
             value=", ".join(str(v) for v in cat.msf_options),
         )
-        cat.msf_options = [float(x) for x in msf_text.split(",") if x.strip()]
+        # Clamped (not just parsed) since assigning to an existing Catalog
+        # instance doesn't re-run its own __post_init__ cap -- see Ash: cap
+        # msf at 1.0 everywhere.
+        cat.msf_options = sorted({min(float(x), 1.0) for x in msf_text.split(",") if x.strip()})
 
         type_opts = st.multiselect("Bearing types to consider", options=[2, 3], default=cat.bearing_types)
         cat.bearing_types = type_opts or [2]
@@ -303,8 +349,15 @@ with tab_optimizer:
             min_vertical_kN=req_min_vertical_kN if req_state_min_vertical else None,
         )
         with st.spinner(f"Searching {cat.estimated_combinations():,} candidate designs…"):
-            result = find_optimal_design(req, cat)
+            st.session_state.optimizer_result = find_optimal_design(req, cat)
 
+    # Read from session_state (not gated on the search button itself) so the
+    # calculation-document section's own widgets below -- which trigger a
+    # rerun like any other Streamlit widget -- don't make this whole result
+    # disappear just because "Run optimization" wasn't the button clicked
+    # on that particular rerun.
+    result = st.session_state.get("optimizer_result")
+    if result is not None:
         st.write(result.message)
 
         if result.best is None:
@@ -347,6 +400,11 @@ with tab_optimizer:
                     }
                     for c in result.alternatives
                 ])
+
+            _render_calc_document_section(
+                w=b.w, l=b.l, n=b.n, ti=b.ti, ts=b.ts, g=b.g, mu=cat.mu,
+                bearing_type=b.bearing_type, msf=b.msf, esl=cat.esl, key_prefix="optimizer",
+            )
 
 
 # ----------------------------------------------------------------------------
@@ -455,7 +513,8 @@ with tab_schedule:
              "tab. Off by default so an explicit contract value below is "
              "used exactly as given.",
     )
-    env_msf = e5.number_input("msf", value=float(default_env[4]), step=0.05, disabled=search_msf)
+    env_msf = e5.number_input("msf", min_value=0.01, max_value=1.0, value=min(float(default_env[4]), 1.0),
+                               step=0.05, disabled=search_msf)
     env_esl = st.selectbox("esl", options=[0, 1], index=int(default_env[5]))
 
     default_min_vertical = default_env[6] if len(default_env) > 6 else None
@@ -470,7 +529,7 @@ with tab_schedule:
     )
     env_min_vertical_kN = mv_col2.number_input(
         "Minimum vertical load (kN)", value=float(default_min_vertical or 0), min_value=0.0,
-        step=10.0, disabled=not env_state_min_vertical,
+        step=10.0, disabled=not env_state_min_vertical, key="schedule_min_vertical_kN",
     )
 
     dl_col, ul_col = st.columns(2)
@@ -512,62 +571,75 @@ with tab_schedule:
             cat = st.session_state.catalog
             with st.spinner(f"Checking every candidate against all {len(schedule.combinations)} "
                              f"combination(s)…"):
-                result = find_optimal_design_for_schedule(schedule, cat)
+                st.session_state.schedule_result = find_optimal_design_for_schedule(schedule, cat)
+                st.session_state.schedule_mu_esl = (schedule.mu, schedule.esl)
 
-            st.write(result.message)
+    # Read from session_state (see the same pattern/comment in the Optimal
+    # Design tab above) so the calculation-document section's own widgets
+    # don't make this result disappear on their own reruns.
+    result = st.session_state.get("schedule_result")
+    if result is not None:
+        cat = st.session_state.catalog
+        schedule_mu, schedule_esl = st.session_state.get("schedule_mu_esl", (0.3, 0))
+        st.write(result.message)
 
-            if result.best is None:
-                st.error("No design in the catalog satisfies every combination in this schedule.")
-            else:
-                b = result.best
-                total_ti = b.n * b.ti
-                st.success(
-                    f"Best design: **w={b.w:.0f} mm (longitudinal) × l={b.l:.0f} mm (transverse) × "
-                    f"h={b.result.overal_height:.1f} mm** (total internal elastomer thickness = "
-                    f"{total_ti:.1f} mm) — n={b.n}, ti={b.ti} mm, ts={b.ts} mm, g={b.g} N/mm², "
-                    f"type {b.bearing_type}, msf={b.msf}"
+        if result.best is None:
+            st.error("No design in the catalog satisfies every combination in this schedule.")
+        else:
+            b = result.best
+            total_ti = b.n * b.ti
+            st.success(
+                f"Best design: **w={b.w:.0f} mm (longitudinal) × l={b.l:.0f} mm (transverse) × "
+                f"h={b.result.overal_height:.1f} mm** (total internal elastomer thickness = "
+                f"{total_ti:.1f} mm) — n={b.n}, ti={b.ti} mm, ts={b.ts} mm, g={b.g} N/mm², "
+                f"type {b.bearing_type}, msf={b.msf}"
+            )
+            if search_msf:
+                st.caption(f"msf was searched (catalog options: "
+                           f"{', '.join(str(v) for v in cat.msf_options)}) — "
+                           f"{b.msf} was the smallest value that made this design feasible.")
+            if result.best_check.min_vertical_assumed_zero:
+                st.caption(
+                    "⚠️ No minimum vertical load was stated — 0 kN was assumed for the "
+                    "Type B (friction-only) vs Type C (positive fixing) check."
                 )
-                if search_msf:
-                    st.caption(f"msf was searched (catalog options: "
-                               f"{', '.join(str(v) for v in cat.msf_options)}) — "
-                               f"{b.msf} was the smallest value that made this design feasible.")
-                if result.best_check.min_vertical_assumed_zero:
-                    st.caption(
-                        "⚠️ No minimum vertical load was stated — 0 kN was assumed for the "
-                        "Type B (friction-only) vs Type C (positive fixing) check."
-                    )
-                else:
-                    st.caption(f"Minimum vertical load used for the Type B/Type C check: "
-                               f"{result.best_check.min_vertical_kN_used:.1f} kN (as stated).")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Plan area", f"{b.plan_area:,.0f} mm²")
-                m2.metric("Overall height", f"{b.result.overal_height:.1f} mm")
-                m3.metric("Total volume", f"{b.total_volume:,.0f} mm³")
-                m4.metric("Geometries tried", f"{result.combinations_evaluated:,}")
+            else:
+                st.caption(f"Minimum vertical load used for the Type B/Type C check: "
+                           f"{result.best_check.min_vertical_kN_used:.1f} kN (as stated).")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Plan area", f"{b.plan_area:,.0f} mm²")
+            m2.metric("Overall height", f"{b.result.overal_height:.1f} mm")
+            m3.metric("Total volume", f"{b.total_volume:,.0f} mm³")
+            m4.metric("Geometries tried", f"{result.combinations_evaluated:,}")
 
-                st.markdown("**Per-combination check for the winning design**")
-                # Use the msf actually used for this design (not env_msf,
-                # which is ignored/disabled when "Search msf too" is on).
-                strain_limit = b.msf * 7
-                st.dataframe([
+            st.markdown("**Per-combination check for the winning design**")
+            # Use the msf actually used for this design (not env_msf,
+            # which is ignored/disabled when "Search msf too" is on).
+            strain_limit = b.msf * 7
+            st.dataframe([
+                {
+                    "Combination": c.combination.label,
+                    "Pass": "✅" if c.passed else "❌",
+                    "Strain inner": f"{c.result.total_strain_i:.3f}" if c.result.total_strain_i is not None else "—",
+                    "Strain outer": f"{c.result.total_strain_o:.3f}" if c.result.total_strain_o is not None else "—",
+                    "Limit": f"{strain_limit:.3f}",
+                }
+                for c in result.best_check.checks
+            ], use_container_width=True)
+
+            if result.alternatives:
+                st.markdown("**Next-best alternatives**")
+                st.table([
                     {
-                        "Combination": c.combination.label,
-                        "Pass": "✅" if c.passed else "❌",
-                        "Strain inner": f"{c.result.total_strain_i:.3f}" if c.result.total_strain_i is not None else "—",
-                        "Strain outer": f"{c.result.total_strain_o:.3f}" if c.result.total_strain_o is not None else "—",
-                        "Limit": f"{strain_limit:.3f}",
+                        "w (mm)": c.w, "l (mm)": c.l, "n": c.n, "ti (mm)": c.ti,
+                        "ts (mm)": c.ts, "g": c.g, "type": c.bearing_type,
+                        "volume (mm³)": f"{c.total_volume:,.0f}",
+                        "height (mm)": f"{c.result.overal_height:.1f}",
                     }
-                    for c in result.best_check.checks
-                ], use_container_width=True)
+                    for c in result.alternatives
+                ])
 
-                if result.alternatives:
-                    st.markdown("**Next-best alternatives**")
-                    st.table([
-                        {
-                            "w (mm)": c.w, "l (mm)": c.l, "n": c.n, "ti (mm)": c.ti,
-                            "ts (mm)": c.ts, "g": c.g, "type": c.bearing_type,
-                            "volume (mm³)": f"{c.total_volume:,.0f}",
-                            "height (mm)": f"{c.result.overal_height:.1f}",
-                        }
-                        for c in result.alternatives
-                    ])
+            _render_calc_document_section(
+                w=b.w, l=b.l, n=b.n, ti=b.ti, ts=b.ts, g=b.g, mu=schedule_mu,
+                bearing_type=b.bearing_type, msf=b.msf, esl=schedule_esl, key_prefix="schedule",
+            )

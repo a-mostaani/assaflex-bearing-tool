@@ -20,12 +20,15 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
+from bearing_tool.calc_document import build_calculation_document
 from bearing_tool.catalog import Catalog, default_catalog
 from bearing_tool.optimizer import find_optimal_design_for_schedule
+from bearing_tool.render_html import render_calculation_document_html
+from bearing_tool.render_pdf import render_calculation_document_pdf
 from bearing_tool.schedule import BearingSchedule, LoadCombination
 
 from . import config
@@ -71,7 +74,12 @@ class ScheduleIn(BaseModel):
     # design possible (see bearing_tool.schedule.BearingSchedule.msf) --
     # this form deliberately doesn't expose an msf field to the visitor, so
     # it's always None here in practice, letting the catalog decide.
-    msf: Optional[float] = None
+    # le=1.0: EN 1337-3's own full stated allowance is the ceiling this tool
+    # enforces everywhere (see solver.py's evaluate_bearing and
+    # Catalog.msf_options) -- rejected here too (422) for a caller posting
+    # directly to this API, not just the form's own UI. Per Ash: cap msf at
+    # 1.0 everywhere.
+    msf: Optional[float] = Field(default=None, le=1.0)
     esl: int = 0
     # The lowest vertical load this bearing could plausibly see in service
     # (kN) -- used for the Type B (friction-only) vs Type C (positive
@@ -126,6 +134,12 @@ class DesignOut(BaseModel):
     # "not checked" (see ScheduleIn.min_vertical_kN).
     min_vertical_kN_used: float = 0.0
     min_vertical_assumed_zero: bool = False
+    # The branded "AssaFlex Calculation Document" (see bearing_tool.calc_document)
+    # for the winning design, as a ready-to-embed HTML string -- only ever
+    # populated on the access-code-authorized path, same gating as every
+    # other field above. A PDF version of the same document is available via
+    # POST /api/design-document.pdf with the same request payload.
+    document_html: Optional[str] = None
 
 
 class DesignRequestOut(BaseModel):
@@ -155,33 +169,52 @@ def _design_out(result) -> DesignOut:
     )
 
 
+def _schedule_from_payload(schedule_in: ScheduleIn) -> BearingSchedule:
+    return BearingSchedule(
+        label=schedule_in.label,
+        combinations=[LoadCombination(**c.model_dump()) for c in schedule_in.combinations],
+        max_longitudinal_mm=schedule_in.max_longitudinal_mm,
+        max_transverse_mm=schedule_in.max_transverse_mm,
+        max_height_mm=schedule_in.max_height_mm,
+        mu=schedule_in.mu, msf=schedule_in.msf, esl=schedule_in.esl,
+        min_vertical_kN=schedule_in.min_vertical_kN,
+    )
+
+
+def _require_access_code(access_code: str) -> None:
+    access_code = access_code.strip()
+    if not access_code or not config.DESIGN_ACCESS_CODE or access_code != config.DESIGN_ACCESS_CODE:
+        raise HTTPException(401, "Incorrect access code.")
+
+
 @app.post("/api/design-schedule", response_model=DesignRequestOut)
 def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
     if not payload.schedule.combinations:
         raise HTTPException(400, "Add at least one load combination.")
 
-    schedule = BearingSchedule(
-        label=payload.schedule.label,
-        combinations=[LoadCombination(**c.model_dump()) for c in payload.schedule.combinations],
-        max_longitudinal_mm=payload.schedule.max_longitudinal_mm,
-        max_transverse_mm=payload.schedule.max_transverse_mm,
-        max_height_mm=payload.schedule.max_height_mm,
-        mu=payload.schedule.mu, msf=payload.schedule.msf, esl=payload.schedule.esl,
-        min_vertical_kN=payload.schedule.min_vertical_kN,
-    )
+    schedule = _schedule_from_payload(payload.schedule)
 
     access_code = payload.access_code.strip()
     if access_code:
         # Access-code path: reveal the design directly, skip the
         # engineering/sales email entirely (AssaFlex's choice -- a correct
         # code is treated as a trusted bypass, not just an alternate view).
-        if not config.DESIGN_ACCESS_CODE or access_code != config.DESIGN_ACCESS_CODE:
-            raise HTTPException(401, "Incorrect access code.")
+        _require_access_code(access_code)
         result = find_optimal_design_for_schedule(schedule, _catalog)
+        design_out = _design_out(result)
+        if result.best is not None:
+            b = result.best
+            doc = build_calculation_document(
+                w=b.w, l=b.l, n=b.n, ti=b.ti, ts=b.ts, g=b.g, mu=schedule.mu,
+                bearing_type=b.bearing_type, msf=b.msf, esl=schedule.esl,
+                client_name=payload.submitter.company or payload.submitter.name,
+                project_name=schedule.label,
+            )
+            design_out.document_html = render_calculation_document_html(doc)
         return DesignRequestOut(
             status="authorized",
             message="Access code accepted — showing the computed design below.",
-            design=_design_out(result),
+            design=design_out,
         )
 
     # Normal path: compute + email engineering/sales, acknowledge only.
@@ -206,6 +239,35 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
         status="received",
         message="Thanks — your bearing schedule has been received. Our engineering "
                 "team will review it and get back to you.",
+    )
+
+
+@app.post("/api/design-document.pdf")
+def design_document_pdf(payload: DesignRequestIn) -> Response:
+    """Same request shape as /api/design-schedule -- returns the winning
+    design's branded calculation document as a downloadable PDF. Access-code
+    gated exactly like that endpoint's "authorized" path; this is never
+    reachable from the plain (email-routed) visitor flow."""
+    _require_access_code(payload.access_code)
+    if not payload.schedule.combinations:
+        raise HTTPException(400, "Add at least one load combination.")
+
+    schedule = _schedule_from_payload(payload.schedule)
+    result = find_optimal_design_for_schedule(schedule, _catalog)
+    if result.best is None:
+        raise HTTPException(404, "No feasible design found for this schedule.")
+
+    b = result.best
+    doc = build_calculation_document(
+        w=b.w, l=b.l, n=b.n, ti=b.ti, ts=b.ts, g=b.g, mu=schedule.mu,
+        bearing_type=b.bearing_type, msf=b.msf, esl=schedule.esl,
+        client_name=payload.submitter.company or payload.submitter.name,
+        project_name=schedule.label,
+    )
+    pdf_bytes = render_calculation_document_pdf(doc)
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=assaflex_calculation_document.pdf"},
     )
 
 

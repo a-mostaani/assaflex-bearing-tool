@@ -56,6 +56,18 @@ converges in the original):
   matching the buckling-overload precedent above -- the optimizer already
   treats any ``feasible=False`` candidate as a hit to skip, so no caller
   needed to change.
+* ``msf`` above 1.0 is rejected outright (``ValueError``), not silently
+  allowed through. ``msf`` scales *down* from EN 1337-3's own strain
+  (``msf*7``) and displacement (``msf*Tq``) ceilings -- 1.0 is "use the
+  standard's full stated allowance", so anything above that exceeds the
+  standard itself. AssaFlex's own calculation documents have been seen using
+  ``msf=1.1`` (a manufacturer-specific allowance beyond the base code), but
+  no confirmed formula/justification for that exists in this codebase yet,
+  so it's refused here rather than guessed at. Per Ash: cap ``msf`` at 1.0
+  everywhere -- this is the last line of defense; ``Catalog.msf_options`` and
+  every UI/API entry point (``app.py``, ``webapp/main.py``) also enforce the
+  same cap so a design never gets this far with ``msf > 1`` in the first
+  place.
 
 All four evaluation modes (capacity-mode with load and/or rotation free, and
 full check-mode) plus a type-3 bearing and the overload early-return above
@@ -139,6 +151,24 @@ class BearingResult:
     # `min_vertical_load` on evaluate_bearing).
     min_vertical_load: Optional[float] = None
 
+    # Horizontal load (N) the bearing exerts on the foundation to resist
+    # translatory movement at `max_vec_shear_def` -- i.e. the horizontal load
+    # needed to bring the bearing to its maximum shear displacement. Computed
+    # once (line ~271, "max_hor_f") and never mutated afterwards; exposed here
+    # rather than left as a local so callers can report it directly (this is
+    # AssaFlex's own "Rxy" figure on their calculation documents).
+    max_hor_f: Optional[float] = None
+
+    # Buckling-only vertical load capacity (5.3.3.6.b), evaluated with no
+    # rotation demand -- distinct from `load_upperbound` below, which folds in
+    # the strain-based limits too. The original algorithm computes this as an
+    # initial guess for `max_load`/`load_upperbound` and then overwrites it via
+    # the strain-convergence loop a few lines later; captured here before that
+    # happens so it survives as its own figure (AssaFlex's "Fz,max": "Maximum
+    # Vertical Load With no rotation and full shear deflection, considering
+    # buckling stability criteria").
+    buckling_load_capacity: Optional[float] = None
+
 
 def evaluate_bearing(
     w: float,
@@ -187,6 +217,16 @@ def evaluate_bearing(
     load of 0 is considered" -- never silently skip the check just because
     no value was given.
     """
+    if msf > 1:
+        raise ValueError(
+            f"msf={msf} exceeds 1.0 -- EN 1337-3's own strain/displacement "
+            "limits (msf=1.0 uses the standard's full stated allowance) are "
+            "the ceiling this tool enforces. A manufacturer-specific allowance "
+            "above that (e.g. AssaFlex's own calculation documents sometimes "
+            "state msf > 1) is a real thing but is out of scope here until "
+            "confirmed -- see the module docstring."
+        )
+
     res = BearingResult()
 
     # --- normalize perc1 / perc2 (lines 69-83) ---
@@ -269,6 +309,7 @@ def evaluate_bearing(
             res.warnings.append("Design displacement(s) are above standard value!")
 
     max_hor_f = A * g * max_vec_shear_def / Tq
+    res.max_hor_f = max_hor_f
     min_load = max_hor_f / mu
 
     Ar = A1 * (1 - (max_shear_def_w / a) - (max_shear_def_l / b))
@@ -299,11 +340,13 @@ def evaluate_bearing(
             2 * ap * g * s_i * Ar / (3 * (n * ti + 2 * to)),
             min(6 * msf * g * Ar * s_i / 1.5, 6 * msf * g * Ar * s_o / 1.5),
         )
+        res.buckling_load_capacity = max_load
     else:
         load_upperbound = max(
             2 * ap * g * s_i * Ar / (3 * (n * ti + 2 * to)),
             min(6 * msf * g * Ar * s_i / 1.5, 6 * msf * g * Ar * s_o / 1.5),
         )
+        res.buckling_load_capacity = load_upperbound
         if dl >= load_upperbound:
             res.warnings.append(
                 "The Designed Load is higher than capacity of this bearing"

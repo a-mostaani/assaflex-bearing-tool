@@ -77,6 +77,14 @@ def test_invalid_email_rejected():
     assert resp.status_code == 422
 
 
+def test_msf_above_one_rejected():
+    # Per Ash: cap msf at 1.0 everywhere -- rejected at the API boundary
+    # (422) even for a caller posting directly, not just the form's own UI.
+    payload = {**VALID_PAYLOAD, "schedule": {**VALID_PAYLOAD["schedule"], "msf": 1.1}}
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 422
+
+
 def test_email_failure_is_reported_but_request_still_succeeds(monkeypatch):
     def failing_send_email(subject, html_body, to_addrs):
         raise RuntimeError("SMTP is down")

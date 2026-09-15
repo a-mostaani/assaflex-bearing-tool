@@ -66,6 +66,13 @@ public-facing web form (see `webapp/`) for assaflex.com.
   row-by-row against the optimizer's candidates).
 - `reference/des_reinf_bearing_bsi_test_2.m` — the original MATLAB file, kept
   for reference and as the source of truth the port was checked against.
+- `reference/lrd_surface.m` — the original MATLAB capacity-surface plotter,
+  ported to `bearing_tool/surface.py` (see that module's docstring).
+- `bearing_tool/surface.py`, `calc_document.py`, `render_html.py`,
+  `render_pdf.py` — new: the "AssaFlex Calculation Document" report (matching
+  parameters/mechanical-properties/capacity-surface layout AssaFlex's own
+  calculation documents use), rendered inline in the Streamlit app and the
+  webapp's access-code path, with a PDF download in both.
 - `webapp/` — new: a small FastAPI backend + a self-contained HTML/JS form,
   for embedding a "request a bearing design" form on assaflex.com itself
   (separate from the internal Streamlit tool above). A submission computes

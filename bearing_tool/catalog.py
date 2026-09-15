@@ -87,6 +87,15 @@ class Catalog:
     # make a search hang. ~1e6 combinations run in well under a minute.
     max_combinations: int = 3_000_000
 
+    def __post_init__(self) -> None:
+        # msf > 1.0 exceeds EN 1337-3's own stated allowance (see solver.py,
+        # which refuses it outright) -- clamped here too so a catalog loaded
+        # from JSON, edited in the UI, or constructed directly in a script
+        # can never smuggle one through to the optimizer. Per Ash: cap msf
+        # at 1.0 everywhere.
+        clamped = sorted({min(v, 1.0) for v in self.msf_options})
+        self.msf_options = clamped
+
     def plan_values(self) -> List[float]:
         vals = []
         v = self.plan_min

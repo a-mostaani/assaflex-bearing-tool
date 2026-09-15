@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
+
+# Confidential reference material -- not for the public repo
+Mechanical Properties-2017-09-15-770x770x144-AssaFlex-Gtech.pdf
 .pytest_cache/
 tests/octave_check/octave-workspace
 .streamlit/

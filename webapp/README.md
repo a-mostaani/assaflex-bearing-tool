@@ -24,7 +24,11 @@ Two pieces:
 1. **`main.py`** — a small FastAPI backend (`/api/design-schedule`) that
    runs the existing `bearing_tool` optimizer and sends the notification
    email. Needs Python hosting somewhere (see below) — WordPress itself
-   can't run this.
+   can't run this. The access-code-authorized path also returns a branded
+   "AssaFlex Calculation Document" (`document_html` on the response) for the
+   winning design, matching the internal Streamlit app's own report; a PDF
+   version of the same document is available via `POST
+   /api/design-document.pdf` (same request body, same access-code gate).
 2. **`static/design-request-form.html`** — a self-contained HTML/CSS/JS
    page with the actual form (dynamic add/remove rows for load
    combinations). Embed this in WordPress; it calls the backend above.

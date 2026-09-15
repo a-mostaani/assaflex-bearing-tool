@@ -4,193 +4,347 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bearing Design Request — AssaFlex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  /* ---- Theming: change these to match assaflex.com's palette/fonts ---- */
+  /* ---- Theming: colors sampled from assaflex.co.uk (deep green + lime accent, Poppins) ---- */
   :root {
-    --af-primary: #c0392b;
-    --af-primary-dark: #96291d;
-    --af-text: #222;
-    --af-muted: #666;
-    --af-border: #d8d8d8;
-    --af-bg: #fafafa;
-    --af-font: Arial, Helvetica, sans-serif;
+    --af-maxw: 1180px;
+    --af-ink: #142420;
+    --af-body: #2b3733;
+    --af-muted: #5b6864;
+    --af-line: #dbe3df;
+    --af-line-strong: #b9c4bf;
+    --af-page-bg: #f2f6f4;
+    --af-panel: #ffffff;
+    --af-green: #004439;       /* brand deep green: buttons, borders, text-safe accent */
+    --af-green-dark: #00332a;
+    --af-green-tint: #e8f1ec;  /* light wash for selected/hover states */
+    --af-lime: #6db942;        /* brand lime: readable only on the dark green hero band */
+    --af-ok: #2e6b4c;
+    --af-ok-bg: #e7f1ea;
+    --af-error: #9e3226;
+    --af-error-bg: #fbeae6;
+    --af-font: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --af-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 
   * { box-sizing: border-box; }
   body {
     font-family: var(--af-font);
-    color: var(--af-text);
-    background: var(--af-bg);
+    color: var(--af-body);
+    background: var(--af-page-bg);
     margin: 0;
-    padding: 24px 16px;
+    -webkit-font-smoothing: antialiased;
   }
-  .af-form-wrap { max-width: 900px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  p.af-intro { color: var(--af-muted); margin-top: 0; }
-  h2 { font-size: 1.1rem; margin-top: 32px; margin-bottom: 8px; }
-  .af-card {
-    background: #fff; border: 1px solid var(--af-border); border-radius: 8px;
-    padding: 16px; margin-bottom: 16px;
+
+  .af-hero { background: var(--af-green); padding: 34px 24px 40px; }
+  .af-hero-inner {
+    max-width: var(--af-maxw); margin: 0 auto;
+    display: flex; gap: 16px; align-items: flex-start;
   }
-  label { display: block; font-size: 0.85rem; color: var(--af-muted); margin-bottom: 4px; }
+  .af-mark {
+    flex: none;
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1.5px solid var(--af-lime);
+    color: var(--af-lime);
+    font-family: var(--af-mono);
+    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em;
+  }
+  h1 {
+    font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em;
+    color: #ffffff; margin: 2px 0 6px;
+  }
+  p.af-intro { color: rgba(255,255,255,0.82); margin: 0 0 6px; max-width: 62ch; line-height: 1.55; font-size: 0.95rem; }
+  p.af-caption {
+    font-family: var(--af-mono); font-size: 0.78rem; color: var(--af-lime);
+    margin: 0; letter-spacing: 0.02em;
+  }
+
+  .af-page { max-width: var(--af-maxw); margin: 0 auto; padding: 34px 24px 80px; }
+
+  .af-panel {
+    background: var(--af-panel);
+    border: 1px solid var(--af-line-strong);
+    border-top: 3px solid var(--af-green);
+    padding: 4px 32px 32px;
+  }
+  @media (max-width: 600px) { .af-panel { padding: 4px 18px 24px; } }
+
+  .af-section { padding: 28px 0; border-top: 1px solid var(--af-line); }
+  .af-section:first-of-type { border-top: none; }
+
+  .af-section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .af-index {
+    flex: none;
+    font-family: var(--af-mono); font-size: 0.72rem; font-weight: 600;
+    color: var(--af-green); border: 1px solid var(--af-green);
+    padding: 1px 6px; line-height: 1.5; letter-spacing: 0.02em;
+  }
+  h2 { font-size: 1.05rem; font-weight: 700; color: var(--af-ink); margin: 0; }
+  .af-section-note {
+    color: var(--af-muted); font-size: 0.88rem; line-height: 1.55;
+    max-width: 62ch; margin: 6px 0 18px 40px;
+  }
+  @media (max-width: 480px) { .af-section-note { margin-left: 0; } }
+
+  .af-section-body { margin-left: 40px; }
+  @media (max-width: 480px) { .af-section-body { margin-left: 0; } }
+  /* The load-combinations table needs every pixel of width it can get,
+     so let its body sit flush instead of indented under the heading. */
+  .af-section-body.af-full-bleed { margin-left: 0; }
+
+  /* Two sections sharing one row on wide screens, to use the extra width
+     instead of stacking everything into one long, narrow column. */
+  .af-section-pair { display: grid; grid-template-columns: 3fr 2fr; column-gap: 56px; }
+  @media (max-width: 900px) { .af-section-pair { grid-template-columns: 1fr; row-gap: 28px; } }
+
+  label { display: block; font-size: 0.82rem; color: var(--af-muted); margin-bottom: 5px; }
   input, select, textarea {
-    width: 100%; padding: 8px; border: 1px solid var(--af-border); border-radius: 4px;
-    font-size: 0.9rem; font-family: inherit;
+    width: 100%; padding: 9px 10px; border: 1px solid var(--af-line-strong); border-radius: 2px;
+    font-size: 0.92rem; font-family: inherit; color: var(--af-ink); background: var(--af-panel);
   }
-  .af-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .af-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  @media (max-width: 600px) {
-    .af-grid2, .af-grid3 { grid-template-columns: 1fr; }
+  input[type="number"] { font-family: var(--af-mono); font-size: 0.88rem; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--af-green); outline-offset: 1px; border-color: var(--af-green);
   }
-  .af-field { margin-bottom: 12px; }
+
+  .af-grid-details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .af-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (min-width: 900px) { .af-grid-details { grid-template-columns: repeat(4, 1fr); } }
+  @media (max-width: 560px) {
+    .af-grid-details, .af-grid3 { grid-template-columns: 1fr; }
+  }
+  .af-field { margin-bottom: 14px; }
+  .af-field:last-child { margin-bottom: 0; }
+
   table.af-combos { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  table.af-combos th, table.af-combos td { border: 1px solid var(--af-border); padding: 4px; }
-  table.af-combos input, table.af-combos select { padding: 4px; font-size: 0.8rem; }
+  table.af-combos th {
+    text-align: left; font-weight: 600; color: var(--af-ink);
+    border-bottom: 2px solid var(--af-ink); padding: 6px 6px; white-space: nowrap;
+  }
+  table.af-combos td { border-bottom: 1px solid var(--af-line); padding: 5px; }
+  table.af-combos tbody tr:hover { background: var(--af-page-bg); }
+  table.af-combos input, table.af-combos select {
+    padding: 5px 6px; font-size: 0.8rem; border-radius: 2px;
+  }
+  table.af-combos input { font-family: var(--af-mono); }
   .af-row-actions { text-align: center; }
-  .af-remove-row { background: none; border: none; color: var(--af-primary); cursor: pointer; font-size: 1rem; }
-  .af-btn {
-    background: var(--af-primary); color: #fff; border: none; border-radius: 4px;
-    padding: 10px 20px; font-size: 0.95rem; cursor: pointer;
+  .af-remove-row {
+    background: none; border: none; color: var(--af-green); cursor: pointer;
+    font-size: 1.1rem; line-height: 1; padding: 4px 6px;
   }
-  .af-btn:hover { background: var(--af-primary-dark); }
-  .af-btn.af-secondary { background: #fff; color: var(--af-primary); border: 1px solid var(--af-primary); }
+  .af-remove-row:hover { color: var(--af-error); }
   .af-table-scroll { overflow-x: auto; }
-  #af-status { margin-top: 16px; padding: 12px; border-radius: 6px; display: none; }
-  #af-status.af-ok { background: #e8f5e9; color: #256029; display: block; }
-  #af-status.af-error { background: #fdecea; color: #96291d; display: block; }
-  .af-required::after { content: " *"; color: var(--af-primary); }
-  .af-mode-choice { display: flex; flex-direction: column; gap: 8px; }
-  .af-mode-choice label {
-    display: flex; align-items: flex-start; gap: 8px; font-size: 0.9rem;
-    color: var(--af-text); margin-bottom: 0; cursor: pointer;
+
+  .af-btn {
+    background: var(--af-green); color: #fff; border: none; border-radius: 2px;
+    padding: 11px 22px; font-size: 0.92rem; font-weight: 600; font-family: inherit;
+    cursor: pointer; transition: background-color 0.15s ease;
   }
-  .af-mode-choice input[type="radio"] { width: auto; margin-top: 3px; }
-  #af-access-code-field { display: none; margin-top: 10px; max-width: 260px; }
-  #af-design-result { margin-top: 16px; padding: 16px; border-radius: 6px; background: #e8f5e9; display: none; }
-  #af-design-result h3 { margin-top: 0; font-size: 1rem; }
-  #af-design-result ul { margin: 8px 0 0; padding-left: 20px; font-size: 0.9rem; }
+  .af-btn:hover { background: var(--af-green-dark); }
+  .af-btn:disabled { opacity: 0.6; cursor: default; }
+  .af-btn.af-secondary {
+    background: none; color: var(--af-green); border: 1px solid var(--af-green);
+    padding: 8px 16px; font-size: 0.85rem;
+  }
+  .af-btn.af-secondary:hover { background: var(--af-green-tint); }
+
+  #af-status { margin-top: 18px; padding: 12px 14px; border-radius: 2px; display: none; font-size: 0.9rem; }
+  #af-status.af-ok { background: var(--af-ok-bg); color: var(--af-ok); display: block; }
+  #af-status.af-error { background: var(--af-error-bg); color: var(--af-error); display: block; }
+
+  .af-required::after { content: " *"; color: var(--af-green); }
+
+  .af-mode-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .af-mode-choice { grid-template-columns: 1fr; } }
+  .af-mode-choice label {
+    display: flex; align-items: flex-start; gap: 10px; font-size: 0.9rem;
+    color: var(--af-body); margin-bottom: 0; cursor: pointer;
+    border: 1px solid var(--af-line-strong); padding: 13px 15px;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .af-mode-choice label:hover { border-color: var(--af-green); }
+  .af-mode-choice label:has(input:checked) {
+    border-color: var(--af-green); background: var(--af-green-tint);
+  }
+  .af-mode-choice input[type="radio"] { width: auto; margin-top: 3px; accent-color: var(--af-green); }
+
+  #af-access-code-field { display: none; margin-top: 12px; max-width: 260px; }
+  #af-access-code { font-family: var(--af-mono); letter-spacing: 0.04em; }
+
+  #af-design-result {
+    margin-top: 18px; padding: 18px 20px; border-radius: 2px;
+    background: var(--af-ok-bg); border-left: 3px solid var(--af-ok); display: none;
+  }
+  #af-design-result h3 { margin: 0 0 10px; font-size: 0.95rem; color: var(--af-ink); }
+  #af-design-result ul { margin: 0; padding-left: 18px; font-size: 0.88rem; line-height: 1.6; }
+  #af-design-result li { font-family: var(--af-mono); font-size: 0.82rem; }
+
+  .af-submit-row { padding-top: 26px; border-top: 1px solid var(--af-line); }
 </style>
 </head>
 <body>
-<div class="af-form-wrap">
-  <h1>Request a Bearing Design</h1>
-  <p class="af-intro">
-    Send us your project's bearing schedule and our team will follow up with
-    a recommended design. Fields marked * are required.
-  </p>
+<div class="af-hero">
+  <div class="af-hero-inner">
+    <div class="af-mark" aria-hidden="true">AF</div>
+    <div>
+      <h1>Request a bearing design</h1>
+      <p class="af-intro">
+        Send your project's bearing schedule and we'll size a design and
+        follow up. Fields marked * are required.
+      </p>
+      <p class="af-caption">Elastomeric bearings to EN 1337-3</p>
+    </div>
+  </div>
+</div>
 
+<div class="af-page">
   <form id="af-design-form">
-    <div class="af-card">
-      <h2>Your details</h2>
-      <div class="af-grid2">
-        <div class="af-field">
-          <label class="af-required" for="af-name">Name</label>
-          <input id="af-name" required>
-        </div>
-        <div class="af-field">
-          <label for="af-company">Company</label>
-          <input id="af-company">
-        </div>
-        <div class="af-field">
-          <label class="af-required" for="af-email">Email</label>
-          <input id="af-email" type="email" required>
-        </div>
-        <div class="af-field">
-          <label for="af-phone">Phone</label>
-          <input id="af-phone" type="tel">
-        </div>
-      </div>
-      <div class="af-field">
-        <label for="af-schedule-label">Project / bearing reference</label>
-        <input id="af-schedule-label" placeholder="e.g. Robinson Bridge, bearing mark 1.1">
-      </div>
-      <div class="af-field">
-        <label for="af-notes">Notes (optional)</label>
-        <textarea id="af-notes" rows="3"></textarea>
-      </div>
-    </div>
+    <div class="af-panel">
 
-    <div class="af-card">
-      <h2>Maximum bearing envelope</h2>
-      <div class="af-grid3">
-        <div class="af-field">
-          <label for="af-max-long">Max longitudinal (mm)</label>
-          <input id="af-max-long" type="number" step="any">
+      <div class="af-section">
+        <div class="af-section-head">
+          <span class="af-index">01</span>
+          <h2>Your details</h2>
         </div>
-        <div class="af-field">
-          <label for="af-max-trans">Max transverse (mm)</label>
-          <input id="af-max-trans" type="number" step="any">
+        <div class="af-section-body">
+          <div class="af-grid-details">
+            <div class="af-field">
+              <label class="af-required" for="af-name">Name</label>
+              <input id="af-name" required>
+            </div>
+            <div class="af-field">
+              <label for="af-company">Company</label>
+              <input id="af-company">
+            </div>
+            <div class="af-field">
+              <label class="af-required" for="af-email">Email</label>
+              <input id="af-email" type="email" required>
+            </div>
+            <div class="af-field">
+              <label for="af-phone">Phone</label>
+              <input id="af-phone" type="tel">
+            </div>
+          </div>
+          <div class="af-field">
+            <label for="af-schedule-label">Project / bearing reference</label>
+            <input id="af-schedule-label" placeholder="e.g. Robinson Bridge, bearing mark 1.1">
+          </div>
+          <div class="af-field">
+            <label for="af-notes">Notes (optional)</label>
+            <textarea id="af-notes" rows="3"></textarea>
+          </div>
         </div>
-        <div class="af-field">
-          <label for="af-max-height">Max height (mm)</label>
-          <input id="af-max-height" type="number" step="any">
+      </div>
+
+      <div class="af-section af-section-pair">
+        <div class="af-subsection">
+          <div class="af-section-head">
+            <span class="af-index">02</span>
+            <h2>Maximum bearing envelope</h2>
+          </div>
+          <p class="af-section-note">The largest footprint and height your structure can accept.</p>
+          <div class="af-section-body">
+            <div class="af-grid3">
+              <div class="af-field">
+                <label for="af-max-long">Max longitudinal (mm)</label>
+                <input id="af-max-long" type="number" step="any">
+              </div>
+              <div class="af-field">
+                <label for="af-max-trans">Max transverse (mm)</label>
+                <input id="af-max-trans" type="number" step="any">
+              </div>
+              <div class="af-field">
+                <label for="af-max-height">Max height (mm)</label>
+                <input id="af-max-height" type="number" step="any">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="af-subsection">
+          <div class="af-section-head">
+            <span class="af-index">03</span>
+            <h2>Minimum vertical load</h2>
+          </div>
+          <p class="af-section-note">
+            The lowest vertical load this bearing could see in service — for
+            example a "Min Vertical" case from your schedule. It decides
+            whether a friction-only Type B bearing is enough, or a
+            positive-fixed Type C is required. Leave it blank and we'll
+            assume 0&nbsp;kN, and say so clearly in the result.
+          </p>
+          <div class="af-section-body">
+            <div class="af-field" style="max-width:220px">
+              <label for="af-min-vertical">Minimum vertical load (kN)</label>
+              <input id="af-min-vertical" type="number" step="any">
+            </div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="af-card">
-      <h2>Minimum vertical load</h2>
-      <p class="af-intro" style="margin-top:0">
-        The lowest vertical load this bearing could plausibly see in service
-        (e.g. a "Min Vertical" case from your schedule). This decides
-        whether a friction-only (Type B) bearing is adequate or a
-        positive-fixed (Type C) one is required. Leave blank if you're not
-        sure -- the design will then assume 0&nbsp;kN, and the result will
-        say so clearly.
-      </p>
-      <div class="af-field" style="max-width:220px">
-        <label for="af-min-vertical">Minimum vertical load (kN)</label>
-        <input id="af-min-vertical" type="number" step="any">
+      <div class="af-section">
+        <div class="af-section-head">
+          <span class="af-index">04</span>
+          <h2>Load combinations</h2>
+        </div>
+        <p class="af-section-note">
+          One row per coincident design point from your schedule — SLS Max
+          Vertical, ULS Max Longitudinal, and so on. Add as many rows as you need.
+        </p>
+        <div class="af-section-body af-full-bleed">
+          <div class="af-table-scroll">
+            <table class="af-combos" id="af-combos-table">
+              <thead>
+                <tr>
+                  <th>Limit state</th><th>Case</th>
+                  <th>Vertical (kN)</th><th>Transverse (kN)</th><th>Longitudinal (kN)</th>
+                  <th>Long. disp. (mm)</th><th>Trans. disp. (mm)</th>
+                  <th>Rotation (mrad)</th><th>Trans. rotation (mrad)</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="af-combos-body"></tbody>
+            </table>
+          </div>
+          <p><button type="button" class="af-btn af-secondary" id="af-add-row">+ Add row</button></p>
+        </div>
       </div>
-    </div>
 
-    <div class="af-card">
-      <h2>Load combinations</h2>
-      <p class="af-intro" style="margin-top:0">
-        One row per coincident design point from your bearing schedule
-        (e.g. SLS Max Vertical, ULS Max Longitudinal, etc). Add as many rows
-        as your schedule has.
-      </p>
-      <div class="af-table-scroll">
-        <table class="af-combos" id="af-combos-table">
-          <thead>
-            <tr>
-              <th>Limit state</th><th>Case</th>
-              <th>Vertical (kN)</th><th>Transverse (kN)</th><th>Longitudinal (kN)</th>
-              <th>Long. disp. (mm)</th><th>Trans. disp. (mm)</th>
-              <th>Rotation (mrad)</th><th>Trans. rotation (mrad)</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="af-combos-body"></tbody>
-        </table>
+      <div class="af-section">
+        <div class="af-section-head">
+          <span class="af-index">05</span>
+          <h2>What should happen next?</h2>
+        </div>
+        <div class="af-section-body">
+          <div class="af-mode-choice">
+            <label>
+              <input type="radio" name="af-mode" value="review" checked>
+              <span>Send this to AssaFlex for review. Our engineering and sales
+              teams will follow up — you won't see the computed design yet.</span>
+            </label>
+            <label>
+              <input type="radio" name="af-mode" value="access-code">
+              <span>I have an access code. Show me the computed design
+              directly on this page.</span>
+            </label>
+          </div>
+          <div class="af-field" id="af-access-code-field">
+            <label class="af-required" for="af-access-code">Access code</label>
+            <input id="af-access-code" type="password" autocomplete="off">
+          </div>
+        </div>
       </div>
-      <p><button type="button" class="af-btn af-secondary" id="af-add-row">+ Add row</button></p>
-    </div>
 
-    <div class="af-card">
-      <h2>What should happen next?</h2>
-      <div class="af-mode-choice">
-        <label>
-          <input type="radio" name="af-mode" value="review" checked>
-          <span>Send this to AssaFlex for review — our engineering and sales
-          teams will follow up (default; you won't see the computed design
-          yourself yet).</span>
-        </label>
-        <label>
-          <input type="radio" name="af-mode" value="access-code">
-          <span>I have an access code — show me the computed design directly
-          on this page.</span>
-        </label>
+      <div class="af-submit-row">
+        <button type="submit" class="af-btn" id="af-submit-btn">Submit request</button>
+        <div id="af-status"></div>
+        <div id="af-design-result"></div>
       </div>
-      <div class="af-field" id="af-access-code-field">
-        <label class="af-required" for="af-access-code">Access code</label>
-        <input id="af-access-code" type="password" autocomplete="off">
-      </div>
-    </div>
 
-    <button type="submit" class="af-btn" id="af-submit-btn">Submit request</button>
-    <div id="af-status"></div>
-    <div id="af-design-result"></div>
+    </div>
   </form>
 </div>
 
@@ -240,6 +394,12 @@
   const accessCodeField = document.getElementById("af-access-code-field");
   const accessCodeInput = document.getElementById("af-access-code");
   const submitBtnEl = document.getElementById("af-submit-btn");
+
+  // Remembers the last submitted request payload so the "Download PDF"
+  // button (added by renderDesign, access-code path only) can re-POST the
+  // same schedule/access-code to /api/design-document.pdf without the
+  // visitor re-entering anything.
+  let lastPayload = null;
 
   function currentMode() {
     return document.querySelector('input[name="af-mode"]:checked').value;
@@ -303,8 +463,40 @@
       </ul>
       <p style="color:#666; font-size:0.8rem; margin:10px 0 0;">
         Auto-computed by the AssaFlex bearing design tool from the schedule you entered.
-      </p>`;
+      </p>
+      ${design.document_html ? `<div id="af-calc-document" style="margin-top:16px">${design.document_html}</div>
+      <button type="button" id="af-download-pdf-btn" style="margin-top:12px">⬇ Download PDF</button>` : ""}`;
     resultEl.style.display = "block";
+
+    const downloadBtn = document.getElementById("af-download-pdf-btn");
+    if (downloadBtn) {
+      downloadBtn.addEventListener("click", async () => {
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = "Preparing PDF…";
+        try {
+          const res = await fetch(API_BASE + "/api/design-document.pdf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(lastPayload),
+          });
+          if (!res.ok) throw new Error("PDF request failed");
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "assaflex_calculation_document.pdf";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          alert("Couldn't generate the PDF. Please try again.");
+        } finally {
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = "⬇ Download PDF";
+        }
+      });
+    }
   }
 
   document.getElementById("af-design-form").addEventListener("submit", async function (e) {
@@ -352,6 +544,7 @@
       },
       access_code: mode === "access-code" ? accessCodeInput.value.trim() : ""
     };
+    lastPayload = payload;
 
     const submittingLabel = mode === "access-code" ? "Checking…" : "Submitting…";
     submitBtn.disabled = true;
