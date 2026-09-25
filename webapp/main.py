@@ -440,6 +440,29 @@ def design_document_pdf(payload: DesignRequestIn) -> Response:
     )
 
 
+class EmailTestIn(BaseModel):
+    access_code: str
+
+
+@app.post("/api/email-test")
+def email_test(payload: EmailTestIn) -> dict:
+    """Send a short test email to the configured recipients and report exactly
+    what happened -- for checking email setup without submitting a whole
+    schedule. Access-code protected so it can't be used to spam the inbox."""
+    _require_access_code(payload.access_code)
+    to_addrs = config.ENGINEERING_EMAILS + config.SALES_EMAILS
+    try:
+        send_email("AssaFlex bearing tool: test email",
+                   "<p>This is a test email from the AssaFlex bearing design tool. "
+                   "If you can read this, design-request notifications will reach you.</p>",
+                   to_addrs)
+    except Exception as exc:  # noqa: BLE001 -- report whatever went wrong
+        logger.exception("Test email failed")
+        return {"ok": False, "via": "resend" if config.RESEND_API_KEY else "smtp",
+                "recipients": to_addrs, "error": str(exc)}
+    return {"ok": True, "via": "resend" if config.RESEND_API_KEY else "smtp", "recipients": to_addrs}
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}

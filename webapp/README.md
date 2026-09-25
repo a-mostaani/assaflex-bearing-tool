@@ -122,6 +122,32 @@ command above). Two ways to deploy:
 Either path ends the same way: a live HTTPS URL for `ALLOWED_ORIGINS`/
 `window.AF_API_BASE` and a service that redeploys itself on future pushes.
 
+## Email delivery (Resend or SMTP)
+
+**Railway blocks outbound SMTP on its Free, Trial and Hobby plans**, so on
+those plans SMTP fails with a connection or DNS error. Railway's recommended
+route, and the one this app supports, is Resend's HTTPS API:
+
+1. Create an account at resend.com and add your domain (e.g. `assaflex.co.uk`)
+   under **Domains**. Add the DNS records it shows at your DNS host and wait
+   for it to say *Verified*.
+2. Create an API key (**API Keys** → *Sending access*).
+3. In Railway → Variables set `RESEND_API_KEY`, and set `SMTP_FROM` to an
+   address on the verified domain (e.g. `designs@assaflex.co.uk`).
+   `ENGINEERING_EMAILS` / `SALES_EMAILS` stay as they are. The `SMTP_HOST` /
+   `SMTP_USER` / `SMTP_PASSWORD` variables are then ignored.
+
+With `RESEND_API_KEY` blank the app uses SMTP as before (Railway Pro and
+above, or another host).
+
+To check the setup without submitting a schedule:
+
+    curl -X POST https://<your-app>/api/email-test \
+         -H 'Content-Type: application/json' -d '{"access_code": "<DESIGN_ACCESS_CODE>"}'
+
+It sends a short test email to the configured recipients and returns
+`{"ok": true}`, or the exact error (e.g. "domain is not verified").
+
 ## Schedule upload (AI extraction)
 
 Visitors with the access code (`DESIGN_ACCESS_CODE`) can upload their

@@ -55,6 +55,15 @@ MAX_UPLOAD_MB = _int_env("MAX_UPLOAD_MB", 10)
 EXTRACTIONS_PER_IP_PER_HOUR = _int_env("EXTRACTIONS_PER_IP_PER_HOUR", 10)
 
 
+# --- Email delivery. Two ways to send, picked automatically:
+#  * RESEND_API_KEY set -> Resend's HTTPS API (https://resend.com). Needed on
+#    Railway's Free/Trial/Hobby plans, which block outbound SMTP entirely;
+#    Railway recommends it on every plan.
+#  * otherwise -> the SMTP relay below (Railway Pro and above, or elsewhere).
+# Either way the sender address is SMTP_FROM (for Resend it must be on a
+# domain verified in the Resend dashboard, e.g. designs@assaflex.co.uk). ---
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
+
 # --- SMTP (works with Google Workspace, Microsoft 365, or any transactional
 # email provider's SMTP relay -- e.g. SendGrid, Postmark -- since they all
 # speak standard SMTP). ---

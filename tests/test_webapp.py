@@ -389,3 +389,76 @@ def test_submission_with_an_uploaded_file_requires_the_access_code(monkeypatch, 
                               "data_base64": base64.b64encode(PDF_BYTES).decode()}
     payload["upload_access_code"] = code
     assert client.post("/api/design-schedule", json=payload).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Email delivery: Resend HTTPS API (Railway blocks SMTP on non-Pro plans)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+from webapp import emailer as webapp_emailer
+
+
+class _FakeHTTPResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_resend_is_used_when_its_key_is_set(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["auth"] = req.get_header("Authorization")
+        captured["body"] = _json.loads(req.data)
+        return _FakeHTTPResponse()
+
+    monkeypatch.setattr(webapp_config, "RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(webapp_config, "SMTP_FROM", "designs@assaflex.example")
+    monkeypatch.setattr(webapp_emailer.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(webapp_emailer.smtplib, "SMTP",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("SMTP must not be used")))
+
+    att = webapp_emailer.Attachment("schedule.pdf", "application/pdf", PDF_BYTES)
+    webapp_emailer.send_email("Subj", "<p>hi</p>", ["eng@example.com"], attachments=[att])
+    assert captured["url"] == "https://api.resend.com/emails"
+    assert captured["auth"] == "Bearer re_test"
+    body = captured["body"]
+    assert body["from"] == "designs@assaflex.example" and body["to"] == ["eng@example.com"]
+    assert base64.b64decode(body["attachments"][0]["content"]) == PDF_BYTES
+
+
+def test_resend_error_is_reported_clearly(monkeypatch):
+    import io
+    import urllib.error
+
+    def fake_urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {},
+                                     io.BytesIO(b'{"message":"The assaflex.example domain is not verified."}'))
+
+    monkeypatch.setattr(webapp_config, "RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(webapp_emailer.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(webapp_emailer.EmailConfigError, match="not verified"):
+        webapp_emailer.send_email("Subj", "<p>hi</p>", ["eng@example.com"])
+
+
+def test_unconfigured_smtp_says_what_to_set(monkeypatch):
+    monkeypatch.setattr(webapp_config, "RESEND_API_KEY", "")
+    monkeypatch.setattr(webapp_config, "SMTP_HOST", "smtp.example.com")
+    with pytest.raises(webapp_emailer.EmailConfigError, match="RESEND_API_KEY"):
+        webapp_emailer.send_email("Subj", "<p>hi</p>", ["eng@example.com"])
+
+
+def test_email_test_endpoint_needs_the_code_and_reports_errors(monkeypatch):
+    monkeypatch.setattr(webapp_config, "DESIGN_ACCESS_CODE", UPLOAD_CODE)
+    assert client.post("/api/email-test", json={"access_code": "wrong"}).status_code == 401
+    monkeypatch.setattr(webapp_config, "RESEND_API_KEY", "")
+    monkeypatch.setattr(webapp_config, "SMTP_HOST", "smtp.example.com")
+    r = client.post("/api/email-test", json={"access_code": UPLOAD_CODE}).json()
+    assert r["ok"] is False and "RESEND_API_KEY" in r["error"]

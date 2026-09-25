@@ -11,8 +11,13 @@ build log). Only internal recipients see the numbers.
 
 from __future__ import annotations
 
+import base64
 import html as _html
+import json
+import logging
 import smtplib
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import List, Optional
@@ -187,28 +192,86 @@ def build_email(schedule: BearingSchedule, submitter: Submitter,
     return subject, html
 
 
+logger = logging.getLogger("assaflex.webapp.emailer")
+
+RESEND_URL = "https://api.resend.com/emails"
+
+
+class EmailConfigError(RuntimeError):
+    """Email isn't set up correctly -- the message says what to fix."""
+
+
 def send_email(subject: str, html_body: str, to_addrs: list[str],
                attachments: Optional[List[Attachment]] = None) -> None:
-    """Sends via the SMTP relay configured in webapp/config.py.
+    """Send via Resend's HTTPS API when RESEND_API_KEY is set, otherwise via
+    the SMTP relay configured in webapp/config.py.
 
     Raises on failure -- the caller decides whether that should fail the
     whole request or just be logged (see main.py).
     """
     if not to_addrs:
-        raise ValueError("No recipients configured (ENGINEERING_EMAILS / SALES_EMAILS empty)")
+        raise EmailConfigError("No recipients configured (ENGINEERING_EMAILS / SALES_EMAILS empty)")
+    if config.RESEND_API_KEY:
+        _send_resend(subject, html_body, to_addrs, attachments or [])
+    else:
+        _send_smtp(subject, html_body, to_addrs, attachments or [])
 
+
+def _send_resend(subject: str, html_body: str, to_addrs: list[str],
+                 attachments: List[Attachment]) -> None:
+    body = {
+        "from": config.SMTP_FROM,
+        "to": to_addrs,
+        "subject": subject,
+        "html": html_body,
+    }
+    if attachments:
+        body["attachments"] = [
+            {"filename": a.filename, "content": base64.b64encode(a.data).decode("ascii"),
+             "content_type": a.content_type}
+            for a in attachments
+        ]
+    req = urllib.request.Request(
+        RESEND_URL, data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"Authorization": f"Bearer {config.RESEND_API_KEY}",
+                 "Content-Type": "application/json",
+                 "User-Agent": "assaflex-bearing-tool"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            logger.info("Notification email sent via Resend (%s)", resp.status)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        # 403 with "domain is not verified" is the usual first-time problem:
+        # SMTP_FROM must be on a domain verified in the Resend dashboard.
+        raise EmailConfigError(f"Resend rejected the email (HTTP {exc.code}): {detail}") from exc
+
+
+def _send_smtp(subject: str, html_body: str, to_addrs: list[str],
+               attachments: List[Attachment]) -> None:
+    if not config.SMTP_HOST or config.SMTP_HOST == "smtp.example.com":
+        raise EmailConfigError(
+            "No email service configured: set RESEND_API_KEY (works on every Railway plan) "
+            "or SMTP_HOST (Railway Pro plan and above only).")
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = config.SMTP_FROM
     msg["To"] = ", ".join(to_addrs)
     msg.set_content("This email requires an HTML-capable mail client.")
     msg.add_alternative(html_body, subtype="html")
-    for att in attachments or []:
+    for att in attachments:
         maintype, _, subtype = att.content_type.partition("/")
         msg.add_attachment(att.data, maintype=maintype, subtype=subtype or "octet-stream",
                            filename=att.filename)
 
-    with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT) as server:
+    try:
+        server_cm = smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=30)
+    except OSError as exc:
+        raise EmailConfigError(
+            f"Couldn't connect to SMTP server {config.SMTP_HOST}:{config.SMTP_PORT} ({exc}). "
+            "Check SMTP_HOST -- and note Railway blocks outbound SMTP on Free/Trial/Hobby "
+            "plans; use RESEND_API_KEY there instead.") from exc
+    with server_cm as server:
         if config.SMTP_STARTTLS:
             server.starttls()
         if config.SMTP_USER:
