@@ -129,6 +129,9 @@ class ScheduleCheckResult:
     # and fine" rather than "not stated."
     min_vertical_kN_used: float = 0.0
     min_vertical_assumed_zero: bool = False
+    # Set only by a fail_fast check_all() that stopped early: the index (into
+    # BearingSchedule.combinations) of the row that failed.
+    failed_index: Optional[int] = None
 
     @property
     def failures(self) -> List[CombinationCheck]:
@@ -174,11 +177,23 @@ class BearingSchedule:
 
     def check_all(self, w: float, l: float, n: int, ti: float, ts: float,
                    g: float, bearing_type: float,
-                   msf: Optional[float] = None) -> ScheduleCheckResult:
+                   msf: Optional[float] = None,
+                   fail_fast: bool = False,
+                   order: Optional[List[int]] = None) -> ScheduleCheckResult:
         """Check a candidate geometry against every combination. All must pass.
 
         `msf` overrides `self.msf` for this call only (used by the optimizer
         to probe several candidate values without mutating the schedule).
+
+        `fail_fast=True` stops at the first failing combination and returns
+        an infeasible result holding only the checks run so far -- used by
+        the optimizer's search, where most geometries fail and running the
+        remaining rows is wasted work. `order` (indices into
+        `self.combinations`) sets the order rows are tried in; the
+        optimizer moves whichever row failed last to the front, since the
+        same row tends to reject most neighbouring geometries. Neither
+        changes the verdict, only how quickly an infeasible one is reached.
+        A fail-fast result's `failed_index` names the row that failed.
         Falls back to 0.7 if neither is set -- matching this tool's
         historical fixed default -- so a schedule built without any msf in
         mind still behaves the same as before this became searchable.
@@ -190,7 +205,9 @@ class BearingSchedule:
         min_vertical_load_n = min_vertical_kN_used * 1000.0
         checks: List[CombinationCheck] = []
         min_ts_values: List[float] = []
-        for combo in self.combinations:
+        indices = order if order is not None else range(len(self.combinations))
+        for idx in indices:
+            combo = self.combinations[idx]
             kwargs = combo.to_solver_kwargs(effective_msf)
             r = evaluate_bearing(w=w, l=l, n=n, ti=ti, ts=ts, g=g, mu=self.mu,
                                   bearing_type=bearing_type, esl=self.esl,
@@ -198,6 +215,15 @@ class BearingSchedule:
             checks.append(CombinationCheck(combination=combo, result=r))
             if r.min_ts is not None:
                 min_ts_values.append(r.min_ts)
+            if fail_fast and not r.feasible:
+                return ScheduleCheckResult(feasible=False, checks=checks,
+                                           min_vertical_kN_used=min_vertical_kN_used,
+                                           min_vertical_assumed_zero=min_vertical_assumed_zero,
+                                           failed_index=idx)
+        if order is not None:
+            # Report rows in the schedule's own order, whatever order they ran in.
+            pos = {i: k for k, i in enumerate(order)}
+            checks = [checks[pos[i]] for i in range(len(self.combinations))]
 
         feasible = all(c.passed for c in checks) and bool(checks)
         required_min_ts = max(min_ts_values) if min_ts_values else None

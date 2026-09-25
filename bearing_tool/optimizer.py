@@ -42,6 +42,7 @@ grid -- flagged here rather than built pre-emptively.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -302,9 +303,13 @@ class ScheduleOptimizationResult:
     best: Optional[Candidate] = None
     best_check: Optional[ScheduleCheckResult] = None  # per-combination pass/fail for `best`
     alternatives: List[Candidate] = field(default_factory=list)
-    combinations_evaluated: int = 0  # geometries tried (not schedule rows)
-    feasible_count: int = 0
+    combinations_evaluated: int = 0  # geometries actually checked (not schedule rows)
+    feasible_count: int = 0          # of those checked
     message: str = ""
+    # Geometries in the envelope before bounding; the ones not checked were
+    # skipped because they could not beat the designs already found.
+    geometries_in_envelope: int = 0
+    timed_out: bool = False
     # Mirrors OptimizationResult's fields of the same name -- populated even
     # when no design was found, so a caller can always show what was used
     # for the Type B anti-slip check (see BearingSchedule.min_vertical_kN).
@@ -332,6 +337,7 @@ def find_optimal_design_for_schedule(
     schedule: BearingSchedule,
     catalog: Catalog,
     top_n: int = 5,
+    time_budget_s: Optional[float] = None,
 ) -> ScheduleOptimizationResult:
     """Search the catalog for the minimum-total-volume design that passes
     EVERY combination in `schedule` (see BearingSchedule.check_all).
@@ -341,7 +347,14 @@ def find_optimal_design_for_schedule(
     None, each candidate geometry is checked against `catalog.msf_options`
     (smallest/safest first), keeping the smallest value that makes it
     feasible -- see Catalog.msf_options.
+
+    `time_budget_s`, if given, stops the search once that many seconds have
+    passed and reports it (`timed_out=True`) instead of running on -- a
+    backstop for the public API so a pathological request fails visibly
+    rather than hanging until the client disconnects. Any design returned
+    after a timeout is the best found so far, not a proven optimum.
     """
+    started = time.monotonic()
     if not schedule.combinations:
         return ScheduleOptimizationResult(
             schedule_label=schedule.label,
@@ -379,11 +392,25 @@ def find_optimal_design_for_schedule(
     msf_candidates = [schedule.msf] if schedule.msf is not None else sorted(catalog.msf_options)
 
     ts_min_catalog = min(catalog.ts_options)
-    top: List[Candidate] = []
-    top_checks: List[ScheduleCheckResult] = []  # parallel to `top`
-    evaluated = 0
-    feasible_count = 0
 
+    # Branch-and-bound over total volume. Every geometry's volume is at
+    # least w * l * (its height with the thinnest catalog shim) -- an exact
+    # lower bound, since the real ts can only be thicker (see
+    # _analytic_min_height). Enumerating geometries cheapest-bound-first
+    # means that once `top` holds top_n feasible designs, any geometry whose
+    # bound already exceeds the worst of them can't make the list, and
+    # neither can anything after it -- so the search stops there instead of
+    # running the full schedule check on every remaining geometry. This
+    # returns exactly the same designs, in the same order, as checking every
+    # geometry (ties are broken by the original nested-loop order via
+    # `seq`); it just skips work that could never change the answer.
+    #
+    # Before this, every geometry in the envelope got a full check_all(), so
+    # a submission with a wide envelope (e.g. no height cap) spent minutes
+    # checking large, obviously-not-optimal pads and hit the public API's
+    # request timeout in production.
+    geoms = []
+    seq = 0
     for w in w_values:
         for l in l_values:
             for g in catalog.g_options:
@@ -395,84 +422,116 @@ def find_optimal_design_for_schedule(
                                 continue  # unsupported type
                             if schedule.max_height_mm is not None and min_height > schedule.max_height_mm:
                                 continue  # cannot possibly fit, even with the thinnest shim
-                            evaluated += 1
+                            geoms.append((w * l * min_height, seq, w, l, g, ti, n, bearing_type))
+                            seq += 1
+    geoms.sort()
 
-                            # Check the loosest msf candidate first, not the
-                            # smallest -- see find_optimal_design's matching
-                            # comment for why. This matters even more here:
-                            # each check_all() call re-runs EVERY combination
-                            # in the schedule (14 for a typical real
-                            # schedule), so trying every msf candidate
-                            # smallest-first on every geometry -- most of
-                            # which are infeasible outright -- multiplied the
-                            # whole schedule search by len(msf_candidates)
-                            # and was enough to push a real submission (no
-                            # height cap given, so far more geometries reach
-                            # this point) past the public API's request
-                            # timeout in production.
-                            loosest_msf = msf_candidates[-1]
-                            check = schedule.check_all(w=w, l=l, n=n, ti=ti,
-                                                        ts=ts_min_catalog, g=g,
-                                                        bearing_type=bearing_type,
-                                                        msf=loosest_msf)
-                            if not check.feasible:
-                                continue
-                            chosen_msf = loosest_msf
-                            for cand_msf in msf_candidates[:-1]:
-                                c = schedule.check_all(w=w, l=l, n=n, ti=ti,
-                                                        ts=ts_min_catalog, g=g,
-                                                        bearing_type=bearing_type,
-                                                        msf=cand_msf)
-                                if c.feasible:
-                                    check = c
-                                    chosen_msf = cand_msf
-                                    break
-                            feasible_count += 1
+    deadline = (started + time_budget_s) if time_budget_s else None
+    timed_out = False
 
-                            chosen_ts = ts_min_catalog
-                            if check.required_min_ts and check.required_min_ts > ts_min_catalog:
-                                chosen_ts = _smallest_sufficient_ts(catalog, check.required_min_ts)
-                                if chosen_ts is None:
-                                    continue  # no catalog shim is thick enough
+    top: List[Candidate] = []
+    top_checks: List[ScheduleCheckResult] = []  # parallel to `top`
+    top_seq: List[int] = []                     # parallel to `top`, tie-breaker
+    evaluated = 0
+    feasible_count = 0
+    # Rows tried in this order; whichever row rejects a geometry moves to the
+    # front, since it usually rejects its neighbours too. Only affects speed.
+    order = list(range(len(schedule.combinations)))
 
-                            # ts doesn't affect any strain/capacity formula (see
-                            # solver.py), only overal_height/volume/ts_ok -- so a
-                            # single extra call with the real ts is enough here,
-                            # no need to re-run check_all. msf doesn't affect
-                            # overal_height either, but evaluate_bearing still
-                            # requires a concrete number -- chosen_msf (never
-                            # None) is used rather than schedule.msf (which is
-                            # None whenever msf was searched, and would crash).
-                            final = evaluate_bearing(
-                                w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
-                                mu=schedule.mu, bearing_type=bearing_type,
-                                esl=schedule.esl, ndd=1, nrd=1, perc1=0, perc2=0,
-                                msf=chosen_msf, dl=0, dr=0, dd1=0, dd2=0,
-                            )
-                            if final.overal_height is None:
-                                continue
-                            if schedule.max_height_mm is not None and final.overal_height > schedule.max_height_mm:
-                                continue  # the real (thicker) shim pushed height over the cap
+    for i, (bound, gseq, w, l, g, ti, n, bearing_type) in enumerate(geoms):
+        if len(top) >= top_n and bound > top[-1].total_volume:
+            break  # nothing from here on can beat the current top_n
+        if deadline is not None and (i & 255) == 0 and time.monotonic() > deadline:
+            timed_out = True
+            break
+        evaluated += 1
 
-                            cand = Candidate(w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
-                                              bearing_type=bearing_type, result=final,
-                                              msf=chosen_msf)
-                            top.append(cand)
-                            top_checks.append(check)
-                            order = sorted(range(len(top)), key=lambda i: top[i].total_volume)
-                            top = [top[i] for i in order][:top_n]
-                            top_checks = [top_checks[i] for i in order][:top_n]
+        # Check the loosest msf candidate first, not the smallest -- a
+        # geometry infeasible at the loosest value can't pass at a stricter
+        # one, and most geometries are infeasible, so this rejects them in
+        # one pass instead of len(msf_candidates) passes.
+        loosest_msf = msf_candidates[-1]
+        check = schedule.check_all(w=w, l=l, n=n, ti=ti, ts=ts_min_catalog, g=g,
+                                   bearing_type=bearing_type, msf=loosest_msf,
+                                   fail_fast=True, order=order)
+        if not check.feasible:
+            fi = check.failed_index
+            if fi is not None and order[0] != fi:
+                order.remove(fi)
+                order.insert(0, fi)
+            continue
+        chosen_msf = loosest_msf
+        for cand_msf in msf_candidates[:-1]:
+            c = schedule.check_all(w=w, l=l, n=n, ti=ti, ts=ts_min_catalog, g=g,
+                                   bearing_type=bearing_type, msf=cand_msf,
+                                   fail_fast=True, order=order)
+            if c.feasible:
+                check = c
+                chosen_msf = cand_msf
+                break
+        feasible_count += 1
+
+        chosen_ts = ts_min_catalog
+        if check.required_min_ts and check.required_min_ts > ts_min_catalog:
+            chosen_ts = _smallest_sufficient_ts(catalog, check.required_min_ts)
+            if chosen_ts is None:
+                continue  # no catalog shim is thick enough
+
+        # ts doesn't affect any strain/capacity formula (see solver.py), only
+        # overal_height/volume/ts_ok -- so a single extra call with the real
+        # ts is enough here, no need to re-run check_all. chosen_msf (never
+        # None) is used rather than schedule.msf, which is None whenever msf
+        # was searched.
+        final = evaluate_bearing(
+            w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
+            mu=schedule.mu, bearing_type=bearing_type,
+            esl=schedule.esl, ndd=1, nrd=1, perc1=0, perc2=0,
+            msf=chosen_msf, dl=0, dr=0, dd1=0, dd2=0,
+        )
+        if final.overal_height is None:
+            continue
+        if schedule.max_height_mm is not None and final.overal_height > schedule.max_height_mm:
+            continue  # the real (thicker) shim pushed height over the cap
+
+        cand = Candidate(w=w, l=l, n=n, ti=ti, ts=chosen_ts, g=g,
+                         bearing_type=bearing_type, result=final, msf=chosen_msf)
+        top.append(cand)
+        top_checks.append(check)
+        top_seq.append(gseq)
+        idxs = sorted(range(len(top)), key=lambda k: (top[k].total_volume, top_seq[k]))[:top_n]
+        top = [top[k] for k in idxs]
+        top_checks = [top_checks[k] for k in idxs]
+        top_seq = [top_seq[k] for k in idxs]
 
     schedule_min_vertical_assumed_zero = schedule.min_vertical_kN is None
     schedule_min_vertical_kN_used = (
         schedule.min_vertical_kN if schedule.min_vertical_kN is not None else 0.0
     )
 
+    zero_note_nf = (" (No minimum vertical load was stated -- 0 kN was assumed "
+                    "for the Type B/Type C check.)" if schedule_min_vertical_assumed_zero else "")
+    if timed_out and not top:
+        return ScheduleOptimizationResult(
+            schedule_label=schedule.label,
+            combinations_evaluated=evaluated,
+            feasible_count=feasible_count,
+            geometries_in_envelope=len(geoms),
+            timed_out=True,
+            min_vertical_kN_used=schedule_min_vertical_kN_used,
+            min_vertical_assumed_zero=schedule_min_vertical_assumed_zero,
+            message=(
+                f"The search stopped after {time_budget_s:.0f}s without finding a "
+                f"design ({evaluated:,} of {len(geoms):,} geometries checked). Narrow "
+                "the envelope (maximum plan dimensions and height) and try again."
+                + zero_note_nf
+            ),
+        )
     if not top:
         return ScheduleOptimizationResult(
             schedule_label=schedule.label,
             combinations_evaluated=evaluated,
             feasible_count=feasible_count,
+            geometries_in_envelope=len(geoms),
             min_vertical_kN_used=schedule_min_vertical_kN_used,
             min_vertical_assumed_zero=schedule_min_vertical_assumed_zero,
             message=(
@@ -491,12 +550,17 @@ def find_optimal_design_for_schedule(
         alternatives=top[1:],
         combinations_evaluated=evaluated,
         feasible_count=feasible_count,
+        geometries_in_envelope=len(geoms),
+        timed_out=timed_out,
         min_vertical_kN_used=schedule_min_vertical_kN_used,
         min_vertical_assumed_zero=schedule_min_vertical_assumed_zero,
         message=(
-            f"Found {feasible_count} design(s) satisfying all "
-            f"{len(schedule.combinations)} combinations, out of {evaluated:,} "
-            f"geometries tried."
+            (f"Search stopped after {time_budget_s:.0f}s -- this is the best design "
+             f"found so far, not a proven optimum. Narrowing the envelope will let "
+             f"the search finish. " if timed_out else "")
+            + f"Checked {evaluated:,} of {len(geoms):,} geometries in the envelope "
+            f"(smallest first; the rest could not beat the designs found); "
+            f"{feasible_count} satisfied all {len(schedule.combinations)} combinations."
             + (" No minimum vertical load was stated -- 0 kN was assumed for the "
                "Type B/Type C check." if schedule_min_vertical_assumed_zero else "")
         ),

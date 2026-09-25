@@ -95,8 +95,13 @@ def build_email(schedule: BearingSchedule, submitter: Submitter,
           }</li>
           <li>Plan area: {_fmt(b.plan_area, ' mm&sup2;', 0)} &mdash;
               Total volume: {_fmt(b.total_volume, ' mm&sup3;', 0)}</li>
-          <li>{result.feasible_count:,} feasible design(s) found out of
-              {result.combinations_evaluated:,} tried</li>
+          <li>{result.combinations_evaluated:,} geometries checked (smallest
+              first; the rest could not beat the designs found);
+              {result.feasible_count:,} passed every combination</li>{
+              '<li><strong style="color:#b00020">The search hit its time limit '
+              '-- this is the best design found so far, not a proven '
+              'optimum.</strong></li>' if getattr(result, "timed_out", False) else ''
+          }
         </ul>
         <p><strong>Per-combination check for the suggested design:</strong></p>
         <table border="1" cellpadding="4" cellspacing="0">

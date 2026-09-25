@@ -35,6 +35,14 @@ def _int_env(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+# Seconds the schedule search may run before it stops and reports what it
+# has (see find_optimal_design_for_schedule's time_budget_s). Kept well under
+# the ~5 minute point where browsers/Railway's proxy give up on the request,
+# so a pathological submission gets a clear message instead of "Couldn't
+# reach the server".
+SEARCH_TIME_BUDGET_S = _int_env("SEARCH_TIME_BUDGET_S", 90)
+
+
 # --- SMTP (works with Google Workspace, Microsoft 365, or any transactional
 # email provider's SMTP relay -- e.g. SendGrid, Postmark -- since they all
 # speak standard SMTP). ---

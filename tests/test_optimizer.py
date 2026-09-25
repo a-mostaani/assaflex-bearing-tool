@@ -154,3 +154,100 @@ def test_sufficient_min_vertical_load_keeps_type_b_available():
     res = find_optimal_design(req, SMALL_CATALOG)
     assert res.best is not None
     assert res.best.bearing_type == 2
+
+
+# ---------------------------------------------------------------------------
+# Bounded (smallest-volume-first) schedule search: must return exactly what an
+# exhaustive search over every geometry would, just without checking them all.
+# ---------------------------------------------------------------------------
+
+def _exhaustive_schedule_top(schedule, catalog, top_n):
+    """Reference implementation: full check_all on every geometry, no bounding."""
+    from bearing_tool.optimizer import _analytic_min_height, _smallest_sufficient_ts
+    msfs = [schedule.msf] if schedule.msf is not None else sorted(catalog.msf_options)
+    ts0 = min(catalog.ts_options)
+    found = []
+    seq = 0
+    for w in catalog.plan_values():
+        if schedule.max_longitudinal_mm is not None and w > schedule.max_longitudinal_mm:
+            continue
+        for l in catalog.plan_values():
+            if schedule.max_transverse_mm is not None and l > schedule.max_transverse_mm:
+                continue
+            for g in catalog.g_options:
+                for ti in catalog.ti_options:
+                    for n in catalog.n_values():
+                        for bt in catalog.bearing_types:
+                            h = _analytic_min_height(n, ti, ts0, bt)
+                            if schedule.max_height_mm is not None and h > schedule.max_height_mm:
+                                continue
+                            seq += 1
+                            chosen = None
+                            for m in msfs:
+                                c = schedule.check_all(w=w, l=l, n=n, ti=ti, ts=ts0, g=g,
+                                                       bearing_type=bt, msf=m)
+                                if c.feasible:
+                                    chosen = (m, c)
+                                    break
+                            if chosen is None:
+                                continue
+                            ts = ts0
+                            if chosen[1].required_min_ts and chosen[1].required_min_ts > ts0:
+                                ts = _smallest_sufficient_ts(catalog, chosen[1].required_min_ts)
+                                if ts is None:
+                                    continue
+                            height = _analytic_min_height(n, ti, ts, bt)
+                            if schedule.max_height_mm is not None and height > schedule.max_height_mm:
+                                continue
+                            found.append((w * l * height, seq, (w, l, n, ti, ts, g, bt, chosen[0])))
+    found.sort()
+    return [f[2] for f in found[:top_n]]
+
+
+def test_bounded_schedule_search_matches_exhaustive_search():
+    from bearing_tool.optimizer import find_optimal_design_for_schedule
+    from bearing_tool.schedule import BearingSchedule, LoadCombination
+
+    cat = Catalog(plan_min=150, plan_max=400, plan_step=50, n_min=2, n_max=8,
+                  ti_options=[8, 10, 12], ts_options=[2, 3, 5], g_options=[0.9, 1.15])
+    sched = BearingSchedule(
+        label="bounded-vs-exhaustive",
+        combinations=[
+            LoadCombination(limit_state="ULS", case="Max Vertical", vertical_kN=900,
+                            longitudinal_kN=30, transverse_kN=10,
+                            long_displacement_mm=12, rotation_mrad=4),
+            LoadCombination(limit_state="SLS", case="Max Rotation", vertical_kN=500,
+                            longitudinal_kN=10, transverse_kN=5,
+                            long_displacement_mm=6, rotation_mrad=7,
+                            transverse_rotation_mrad=1),
+        ],
+        min_vertical_kN=300,
+    )
+    expected = _exhaustive_schedule_top(sched, cat, top_n=5)
+    assert expected, "test schedule should have feasible designs"
+
+    res = find_optimal_design_for_schedule(sched, cat, top_n=5)
+    got = [(c.w, c.l, c.n, c.ti, c.ts, c.g, c.bearing_type, c.msf)
+           for c in [res.best] + res.alternatives]
+    assert got == expected
+    # And it actually skipped work.
+    assert res.combinations_evaluated < res.geometries_in_envelope
+    # The winner's per-combination check is complete and in schedule order.
+    assert [c.combination.case for c in res.best_check.checks] == \
+        [c.case for c in sched.combinations]
+    assert all(c.passed for c in res.best_check.checks)
+
+
+def test_schedule_search_time_budget_stops_and_reports():
+    from bearing_tool.optimizer import find_optimal_design_for_schedule
+    from bearing_tool.schedule import BearingSchedule, LoadCombination
+
+    sched = BearingSchedule(
+        label="impossible",
+        combinations=[LoadCombination(limit_state="ULS", case="Max Vertical",
+                                      vertical_kN=1e6, rotation_mrad=1)],
+    )
+    res = find_optimal_design_for_schedule(sched, Catalog(), time_budget_s=0.01)
+    assert res.timed_out
+    assert res.best is None
+    assert "stopped after" in res.message

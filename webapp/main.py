@@ -134,6 +134,9 @@ class DesignOut(BaseModel):
     # "not checked" (see ScheduleIn.min_vertical_kN).
     min_vertical_kN_used: float = 0.0
     min_vertical_assumed_zero: bool = False
+    # True if the search hit SEARCH_TIME_BUDGET_S and stopped early -- any
+    # design shown is then the best found so far, not a proven optimum.
+    timed_out: bool = False
     # The branded "AssaFlex Calculation Document" (see bearing_tool.calc_document)
     # for the winning design, as a ready-to-embed HTML string -- only ever
     # populated on the access-code-authorized path, same gating as every
@@ -154,7 +157,8 @@ def _design_out(result) -> DesignOut:
                           feasible_count=result.feasible_count,
                           combinations_evaluated=result.combinations_evaluated,
                           min_vertical_kN_used=result.min_vertical_kN_used,
-                          min_vertical_assumed_zero=result.min_vertical_assumed_zero)
+                          min_vertical_assumed_zero=result.min_vertical_assumed_zero,
+                          timed_out=result.timed_out)
     b = result.best
     return DesignOut(
         feasible=True, message=result.message,
@@ -166,6 +170,7 @@ def _design_out(result) -> DesignOut:
         combinations_evaluated=result.combinations_evaluated,
         min_vertical_kN_used=result.best_check.min_vertical_kN_used,
         min_vertical_assumed_zero=result.best_check.min_vertical_assumed_zero,
+        timed_out=result.timed_out,
     )
 
 
@@ -200,7 +205,8 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
         # engineering/sales email entirely (AssaFlex's choice -- a correct
         # code is treated as a trusted bypass, not just an alternate view).
         _require_access_code(access_code)
-        result = find_optimal_design_for_schedule(schedule, _catalog)
+        result = find_optimal_design_for_schedule(
+            schedule, _catalog, time_budget_s=config.SEARCH_TIME_BUDGET_S)
         design_out = _design_out(result)
         if result.best is not None:
             b = result.best
@@ -218,7 +224,8 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
         )
 
     # Normal path: compute + email engineering/sales, acknowledge only.
-    result = find_optimal_design_for_schedule(schedule, _catalog)
+    result = find_optimal_design_for_schedule(
+        schedule, _catalog, time_budget_s=config.SEARCH_TIME_BUDGET_S)
 
     submitter = Submitter(**payload.submitter.model_dump(exclude={"email"}),
                            email=str(payload.submitter.email))
@@ -253,7 +260,8 @@ def design_document_pdf(payload: DesignRequestIn) -> Response:
         raise HTTPException(400, "Add at least one load combination.")
 
     schedule = _schedule_from_payload(payload.schedule)
-    result = find_optimal_design_for_schedule(schedule, _catalog)
+    result = find_optimal_design_for_schedule(
+        schedule, _catalog, time_budget_s=config.SEARCH_TIME_BUDGET_S)
     if result.best is None:
         raise HTTPException(404, "No feasible design found for this schedule.")
 
