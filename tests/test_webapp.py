@@ -217,6 +217,8 @@ from webapp import config as webapp_config  # noqa: E402
 from webapp import extract as webapp_extract  # noqa: E402
 
 PDF_BYTES = b"%PDF-1.4\n% fake test pdf\n"
+UPLOAD_CODE = "letmein"
+CODE = {"access_code": UPLOAD_CODE}
 
 
 class _FakeToolUse:
@@ -246,6 +248,7 @@ class _FakeClient:
 @pytest.fixture
 def extraction_on(monkeypatch):
     monkeypatch.setattr(webapp_config, "ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(webapp_config, "DESIGN_ACCESS_CODE", UPLOAD_CODE)
     monkeypatch.setattr(webapp_config, "EXTRACTIONS_PER_IP_PER_HOUR", 0)
     fake = _FakeClient(h3428_model_answer())
     monkeypatch.setattr(webapp_extract, "_client", lambda: fake)
@@ -254,7 +257,7 @@ def extraction_on(monkeypatch):
 
 def test_extract_schedule_prefills_rows_matching_the_hand_transcription(extraction_on):
     from bearing_tool.schedule import BearingSchedule
-    resp = client.post("/api/extract-schedule",
+    resp = client.post("/api/extract-schedule", data=CODE,
                        files={"file": ("H3428.pdf", PDF_BYTES, "application/pdf")})
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -276,26 +279,26 @@ def test_extract_schedule_prefills_rows_matching_the_hand_transcription(extracti
 
 
 def test_extract_schedule_rejects_wrong_types_and_oversize(extraction_on, monkeypatch):
-    r = client.post("/api/extract-schedule", files={"file": ("x.docx", b"PK..", "application/msword")})
+    r = client.post("/api/extract-schedule", data=CODE, files={"file": ("x.docx", b"PK..", "application/msword")})
     assert r.status_code == 415
-    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", b"not a pdf", "application/pdf")})
+    r = client.post("/api/extract-schedule", data=CODE, files={"file": ("x.pdf", b"not a pdf", "application/pdf")})
     assert r.status_code == 415
     monkeypatch.setattr(webapp_config, "MAX_UPLOAD_MB", 0)
-    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    r = client.post("/api/extract-schedule", data=CODE, files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
     assert r.status_code == 413
     assert not extraction_on.calls  # none of these reached the paid API
 
 
 def test_extract_schedule_unavailable_without_api_key(monkeypatch):
     monkeypatch.setattr(webapp_config, "ANTHROPIC_API_KEY", "")
-    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    r = client.post("/api/extract-schedule", data=CODE, files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
     assert r.status_code == 503
     assert client.get("/api/features").json()["schedule_upload"] is False
 
 
 def test_extract_schedule_reports_when_no_schedule_found(extraction_on):
     extraction_on._data = {"found_schedule": False, "combinations": [], "warnings": []}
-    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    r = client.post("/api/extract-schedule", data=CODE, files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
     assert r.status_code == 422
     assert "couldn't find" in r.json()["detail"]
 
@@ -304,7 +307,7 @@ def test_extract_schedule_is_rate_limited_per_ip(extraction_on, monkeypatch):
     monkeypatch.setattr(webapp_config, "EXTRACTIONS_PER_IP_PER_HOUR", 2)
     webapp_main._upload_log.clear()
     headers = {"x-forwarded-for": "203.0.113.9"}
-    codes = [client.post("/api/extract-schedule", headers=headers,
+    codes = [client.post("/api/extract-schedule", headers=headers, data=CODE,
                          files={"file": ("x.pdf", PDF_BYTES, "application/pdf")}).status_code
              for _ in range(3)]
     assert codes == [200, 200, 429]
@@ -334,6 +337,8 @@ def test_uploaded_file_is_attached_to_the_engineering_email(monkeypatch):
                               "data_base64": base64.b64encode(PDF_BYTES).decode()}
     payload["extraction"] = {"model": "claude-test", "warnings": ["SLS row: [rad] read as mrad"],
                              "checks": []}
+    payload["upload_access_code"] = UPLOAD_CODE
+    monkeypatch.setattr(webapp_config, "DESIGN_ACCESS_CODE", UPLOAD_CODE)
     resp = client.post("/api/design-schedule", json=payload)
     assert resp.status_code == 200
     [att] = sent["attachments"]
@@ -348,4 +353,39 @@ def test_submission_rejects_a_disguised_attachment(monkeypatch):
     payload = copy.deepcopy(VALID_PAYLOAD)
     payload["source_file"] = {"filename": "x.exe", "content_type": "application/x-msdownload",
                               "data_base64": base64.b64encode(b"MZ").decode()}
+    payload["upload_access_code"] = UPLOAD_CODE
+    monkeypatch.setattr(webapp_config, "DESIGN_ACCESS_CODE", UPLOAD_CODE)
     assert client.post("/api/design-schedule", json=payload).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Upload is for access-code holders only
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("code", ["", "wrong"])
+def test_extract_schedule_requires_a_valid_access_code(extraction_on, code):
+    r = client.post("/api/extract-schedule", data={"access_code": code},
+                    files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    assert r.status_code == 401
+    assert not extraction_on.calls  # rejected before any paid API call
+
+
+def test_upload_is_off_when_no_access_code_is_configured(extraction_on, monkeypatch):
+    monkeypatch.setattr(webapp_config, "DESIGN_ACCESS_CODE", "")
+    assert client.get("/api/features").json()["schedule_upload"] is False
+    r = client.post("/api/extract-schedule", data={"access_code": "anything"},
+                    files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    assert r.status_code == 503
+    assert not extraction_on.calls
+
+
+@pytest.mark.parametrize("code", ["", "wrong"])
+def test_submission_with_an_uploaded_file_requires_the_access_code(monkeypatch, code):
+    monkeypatch.setattr(webapp_config, "DESIGN_ACCESS_CODE", UPLOAD_CODE)
+    monkeypatch.setattr(webapp_main, "send_email",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no email expected")))
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["source_file"] = {"filename": "schedule.pdf", "content_type": "application/pdf",
+                              "data_base64": base64.b64encode(PDF_BYTES).decode()}
+    payload["upload_access_code"] = code
+    assert client.post("/api/design-schedule", json=payload).status_code == 401

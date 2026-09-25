@@ -198,7 +198,8 @@
   }
   .af-dropzone.af-drag { border-color: var(--af-green); background: var(--af-green-tint); }
   .af-dropzone input[type="file"] { width: auto; flex: 1 1 260px; border: none; padding: 0; background: none; }
-  .af-dropzone .af-mark-field { flex: 0 1 180px; }
+  .af-dropzone .af-mark-field { flex: 0 1 160px; }
+  #af-upload-code { font-family: var(--af-mono); letter-spacing: 0.04em; }
   .af-dropzone .af-mark-field label { margin-bottom: 3px; }
   .af-upload-status { margin-top: 12px; font-size: 0.88rem; color: var(--af-muted); min-height: 1.2em; }
   .af-upload-status.af-busy::before {
@@ -290,16 +291,21 @@
           <h2>Upload your bearing schedule <span style="font-weight:400;color:var(--af-muted)">(optional)</span></h2>
         </div>
         <p class="af-section-note">
-          Have a bearing schedule drawing? Upload it and we'll read the load
-          combinations and maximum dimensions into the form below for you to
-          check. Or skip this and fill in the form by hand.
+          If you have an AssaFlex access code, you can upload your bearing
+          schedule drawing and we'll read the load combinations and maximum
+          dimensions into the form below for you to check. Otherwise, fill in
+          the form by hand.
         </p>
         <div class="af-section-body">
           <div class="af-dropzone" id="af-dropzone">
             <input type="file" id="af-schedule-file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg">
             <div class="af-mark-field">
-              <label for="af-bearing-mark">Bearing mark (if several)</label>
+              <label for="af-bearing-mark">Bearing mark</label>
               <input id="af-bearing-mark" placeholder="e.g. 1.1">
+            </div>
+            <div class="af-mark-field">
+              <label for="af-upload-code">Access code</label>
+              <input id="af-upload-code" type="password" autocomplete="off">
             </div>
             <button type="button" class="af-btn af-secondary" id="af-read-file-btn" disabled>Read schedule</button>
           </div>
@@ -482,13 +488,19 @@
   const uploadSection = document.getElementById("af-upload-section");
   const fileInput = document.getElementById("af-schedule-file");
   const readBtn = document.getElementById("af-read-file-btn");
+  const uploadCodeInput = document.getElementById("af-upload-code");
   const uploadStatus = document.getElementById("af-upload-status");
   const dropzone = document.getElementById("af-dropzone");
   const reviewBox = document.getElementById("af-extract-review");
   const confirmBox = document.getElementById("af-confirm");
   const confirmInput = document.getElementById("af-confirm-checked");
   let maxUploadMb = 10;
-  let uploaded = null;  // {filename, content_type, data_base64, extraction}
+  let uploaded = null;  // {filename, content_type, data_base64, extraction, code}
+
+  function updateReadBtn() {
+    readBtn.disabled = !(fileInput.files.length && uploadCodeInput.value.trim());
+  }
+  uploadCodeInput.addEventListener("input", updateReadBtn);
 
   fetch(API_BASE + "/api/features").then(r => r.ok ? r.json() : null).then(f => {
     if (f && f.schedule_upload) {
@@ -504,7 +516,7 @@
   }
 
   fileInput.addEventListener("change", () => {
-    readBtn.disabled = !fileInput.files.length;
+    updateReadBtn();
     setUploadStatus("");
   });
   ["dragenter", "dragover"].forEach(ev => dropzone.addEventListener(ev, e => {
@@ -592,9 +604,16 @@
     const form = new FormData();
     form.append("file", file);
     form.append("bearing_mark", document.getElementById("af-bearing-mark").value);
+    const code = uploadCodeInput.value.trim();
+    form.append("access_code", code);
     try {
       const res = await fetch(API_BASE + "/api/extract-schedule", { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        setUploadStatus("Incorrect access code. Uploading a schedule needs a valid AssaFlex " +
+                        "access code — or fill in the form by hand.", "error");
+        return;
+      }
       if (!res.ok) {
         setUploadStatus(errorText(data, "We couldn't read that file. Please enter the values by hand."), "error");
         return;
@@ -604,14 +623,17 @@
         filename: file.name,
         content_type: file.type || "application/pdf",
         data_base64: await readAsBase64(file),
-        extraction: { model: data.model, warnings: data.warnings || [], checks: data.checks || [] }
+        extraction: { model: data.model, warnings: data.warnings || [], checks: data.checks || [] },
+        code: code
       };
+      // Save retyping it if they go on to choose "show me the design".
+      if (!accessCodeInput.value) accessCodeInput.value = code;
       setUploadStatus("Done — please check the values below.", "");
       document.getElementById("af-extract-review").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (err) {
       setUploadStatus("Couldn't reach the server. Please try again, or enter the values by hand.", "error");
     } finally {
-      readBtn.disabled = !fileInput.files.length;
+      updateReadBtn();
     }
   });
 
@@ -781,6 +803,7 @@
       payload.source_file = { filename: uploaded.filename, content_type: uploaded.content_type,
                               data_base64: uploaded.data_base64 };
       payload.extraction = uploaded.extraction;
+      payload.upload_access_code = uploaded.code;
     }
     lastPayload = payload;
 

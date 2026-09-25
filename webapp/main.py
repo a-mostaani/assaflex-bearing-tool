@@ -125,6 +125,11 @@ class DesignRequestIn(BaseModel):
     # in the form before submitting; this is the audit trail.
     source_file: Optional["SourceFileIn"] = None
     extraction: Optional["ExtractionInfoIn"] = None
+    # Uploading a schedule is only for access-code holders (AssaFlex's
+    # choice), so a submission carrying an uploaded file must also carry the
+    # code it was uploaded with -- even on the "send for review" path, where
+    # access_code above stays blank.
+    upload_access_code: str = ""
 
 
 class SourceFileIn(BaseModel):
@@ -288,12 +293,17 @@ async def extract_schedule_endpoint(
     request: Request,
     file: UploadFile = File(...),
     bearing_mark: str = Form(""),
+    access_code: str = Form(""),
 ) -> ExtractionOut:
     """Read a bearing schedule from an uploaded PDF/image and return rows to
     pre-fill the form. Nothing is designed or emailed here -- the visitor
-    reviews the values and submits them through /api/design-schedule."""
-    if not config.ANTHROPIC_API_KEY:
+    reviews the values and submits them through /api/design-schedule.
+
+    Access-code holders only: the code is checked before the file is even
+    looked at, so nobody without it can trigger a (paid) extraction."""
+    if not _upload_enabled():
         raise HTTPException(503, "Schedule upload isn't available right now. Please enter the values by hand.")
+    _require_access_code(access_code)
     content_type = (file.content_type or "").lower()
     if content_type == "image/jpg":
         content_type = "image/jpeg"
@@ -328,7 +338,13 @@ async def extract_schedule_endpoint(
 @app.get("/api/features")
 def features() -> dict:
     """Lets the form hide the upload option when it isn't configured."""
-    return {"schedule_upload": bool(config.ANTHROPIC_API_KEY), "max_upload_mb": config.MAX_UPLOAD_MB}
+    return {"schedule_upload": _upload_enabled(), "max_upload_mb": config.MAX_UPLOAD_MB}
+
+
+def _upload_enabled() -> bool:
+    # Needs both: the API key to read files, and an access code to gate who
+    # may upload (with no code configured, nobody can unlock it).
+    return bool(config.ANTHROPIC_API_KEY and config.DESIGN_ACCESS_CODE)
 
 
 @app.post("/api/design-schedule", response_model=DesignRequestOut)
@@ -368,6 +384,8 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
 
     submitter = Submitter(**payload.submitter.model_dump(exclude={"email"}),
                            email=str(payload.submitter.email))
+    if payload.source_file is not None or payload.extraction is not None:
+        _require_access_code(payload.upload_access_code)
     attachment = _decode_source_file(payload.source_file)
     extraction = payload.extraction.model_dump() if payload.extraction else None
     subject, html = build_email(schedule, submitter, result, extraction=extraction,

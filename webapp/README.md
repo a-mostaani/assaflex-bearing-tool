@@ -124,8 +124,11 @@ Either path ends the same way: a live HTTPS URL for `ALLOWED_ORIGINS`/
 
 ## Schedule upload (AI extraction)
 
-Visitors can upload their bearing schedule (PDF, PNG or JPEG) instead of
-typing it in. `POST /api/extract-schedule` sends the file to Claude
+Visitors with the access code (`DESIGN_ACCESS_CODE`) can upload their
+bearing schedule (PDF, PNG or JPEG) instead of typing it in. Everyone else
+fills in the form by hand: the code is checked before the file is looked at,
+a submission carrying an uploaded file must carry a valid code too, and with
+no code configured the upload option stays hidden. `POST /api/extract-schedule` sends the file to Claude
 (`webapp/extract.py`), which fills a fixed schema mirroring EN 1337-1:2000
 Table 1. The rows are then flattened by the same rules as a hand-transcribed
 schedule (`BearingSchedule.from_client_schedule_dict`) and sanity-checked in
@@ -141,7 +144,7 @@ Settings (Railway → Variables):
 
 | Variable | Default | |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | *(blank)* | Required to turn uploads on. Blank hides the upload option; the form still works by hand. |
+| `ANTHROPIC_API_KEY` | *(blank)* | Required to turn uploads on (together with `DESIGN_ACCESS_CODE`). Blank hides the upload option; the form still works by hand. |
 | `EXTRACTION_MODEL` | `claude-opus-5-5` | Model used to read the file. |
 | `EXTRACTION_TIMEOUT_S` | `180` | |
 | `MAX_UPLOAD_MB` | `10` | |
