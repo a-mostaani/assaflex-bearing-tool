@@ -122,6 +122,36 @@ command above). Two ways to deploy:
 Either path ends the same way: a live HTTPS URL for `ALLOWED_ORIGINS`/
 `window.AF_API_BASE` and a service that redeploys itself on future pushes.
 
+## Schedule upload (AI extraction)
+
+Visitors can upload their bearing schedule (PDF, PNG or JPEG) instead of
+typing it in. `POST /api/extract-schedule` sends the file to Claude
+(`webapp/extract.py`), which fills a fixed schema mirroring EN 1337-1:2000
+Table 1. The rows are then flattened by the same rules as a hand-transcribed
+schedule (`BearingSchedule.from_client_schedule_dict`) and sanity-checked in
+plain code (unit slips, max/min ordering, a missing envelope…).
+
+Nothing extracted is designed or emailed automatically. The form is
+pre-filled with the values highlighted, the visitor must tick "I've checked
+the values" before submitting, and the engineering email says the values
+were read by AI, lists what was flagged, and carries the original file as an
+attachment.
+
+Settings (Railway → Variables):
+
+| Variable | Default | |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | *(blank)* | Required to turn uploads on. Blank hides the upload option; the form still works by hand. |
+| `EXTRACTION_MODEL` | `claude-opus-5-5` | Model used to read the file. |
+| `EXTRACTION_TIMEOUT_S` | `180` | |
+| `MAX_UPLOAD_MB` | `10` | |
+| `EXTRACTIONS_PER_IP_PER_HOUR` | `10` | Each upload is a paid API call; 0 disables the limit. |
+
+Accuracy check against a hand transcription (one paid API call):
+
+    ANTHROPIC_API_KEY=... python -m webapp.check_extraction \
+        reference/H3428_Bridge_Bearing_Drawings_1.pdf schedules/H3428_A0_A5_bearing_1.1.json
+
 ## 4. Embed the form in WordPress
 
 WordPress can't run the Python backend, but it can host the static form

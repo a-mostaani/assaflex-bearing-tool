@@ -43,6 +43,18 @@ def _int_env(name: str, default: int) -> int:
 SEARCH_TIME_BUDGET_S = _int_env("SEARCH_TIME_BUDGET_S", 90)
 
 
+# --- Schedule upload (AI extraction, see webapp/extract.py). Leave
+# ANTHROPIC_API_KEY blank to turn uploads off; the form then still works by
+# hand. ---
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+EXTRACTION_MODEL = _env("EXTRACTION_MODEL", "claude-opus-5-5")
+EXTRACTION_TIMEOUT_S = _int_env("EXTRACTION_TIMEOUT_S", 180)
+MAX_UPLOAD_MB = _int_env("MAX_UPLOAD_MB", 10)
+# Each extraction is a paid API call, so a single visitor (by IP) is limited
+# to this many uploads per hour. 0 disables the limit.
+EXTRACTIONS_PER_IP_PER_HOUR = _int_env("EXTRACTIONS_PER_IP_PER_HOUR", 10)
+
+
 # --- SMTP (works with Google Workspace, Microsoft 365, or any transactional
 # email provider's SMTP relay -- e.g. SendGrid, Postmark -- since they all
 # speak standard SMTP). ---

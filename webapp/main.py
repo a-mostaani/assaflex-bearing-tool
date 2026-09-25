@@ -17,12 +17,17 @@ See webapp/README.md for deployment and WordPress embedding instructions.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
-from typing import List, Optional
+import threading
+import time
+from collections import defaultdict, deque
+from typing import Annotated, Deque, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, StringConstraints
 
 from bearing_tool.calc_document import build_calculation_document
 from bearing_tool.catalog import Catalog, default_catalog
@@ -32,7 +37,8 @@ from bearing_tool.render_pdf import render_calculation_document_pdf
 from bearing_tool.schedule import BearingSchedule, LoadCombination
 
 from . import config
-from .emailer import Submitter, build_email, send_email
+from .emailer import Attachment, Submitter, build_email, send_email
+from .extract import ALLOWED_TYPES, ExtractionError, extract_schedule
 
 logger = logging.getLogger("assaflex.webapp")
 
@@ -41,13 +47,17 @@ app = FastAPI(title="AssaFlex Bearing Design Request API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.ALLOWED_ORIGINS,
-    allow_methods=["POST"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 _catalog: Catalog = (
     Catalog.from_json(config.CATALOG_PATH) if config.CATALOG_PATH else default_catalog()
 )
+
+
+# A text field the visitor must fill in (whitespace alone doesn't count).
+RequiredText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class LoadCombinationIn(BaseModel):
@@ -63,7 +73,9 @@ class LoadCombinationIn(BaseModel):
 
 
 class ScheduleIn(BaseModel):
-    label: str = ""
+    # The project name -- required on the public form (it also titles the
+    # engineering email and the calculation document).
+    label: RequiredText
     combinations: List[LoadCombinationIn] = Field(default_factory=list)
     max_longitudinal_mm: Optional[float] = None
     max_transverse_mm: Optional[float] = None
@@ -90,8 +102,8 @@ class ScheduleIn(BaseModel):
 
 
 class SubmitterIn(BaseModel):
-    name: str
-    company: str = ""
+    name: RequiredText
+    company: RequiredText
     email: EmailStr
     phone: str = ""
     notes: str = ""
@@ -106,6 +118,28 @@ class DesignRequestIn(BaseModel):
     # when non-blank, so an unconfigured DESIGN_ACCESS_CODE can't accidentally
     # be "matched" by an empty string.
     access_code: str = ""
+    # Present when the visitor filled the form by uploading their schedule
+    # (see /api/extract-schedule): the original file, attached to the
+    # engineering email so the extracted values can be checked against it,
+    # plus what the extraction flagged. The visitor has reviewed the values
+    # in the form before submitting; this is the audit trail.
+    source_file: Optional["SourceFileIn"] = None
+    extraction: Optional["ExtractionInfoIn"] = None
+
+
+class SourceFileIn(BaseModel):
+    filename: str = Field(max_length=200)
+    content_type: str
+    data_base64: str
+
+
+class ExtractionInfoIn(BaseModel):
+    model: str = ""
+    warnings: List[str] = Field(default_factory=list)
+    checks: List[str] = Field(default_factory=list)
+
+
+DesignRequestIn.model_rebuild()
 
 
 class DesignOut(BaseModel):
@@ -192,6 +226,111 @@ def _require_access_code(access_code: str) -> None:
         raise HTTPException(401, "Incorrect access code.")
 
 
+def _decode_source_file(src: Optional[SourceFileIn]) -> Optional[Attachment]:
+    if src is None:
+        return None
+    if src.content_type not in ALLOWED_TYPES:
+        raise HTTPException(400, "The attached schedule must be a PDF, PNG or JPEG file.")
+    try:
+        data = base64.b64decode(src.data_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "The attached schedule file couldn't be read.")
+    if len(data) > config.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"The attached schedule is larger than {config.MAX_UPLOAD_MB} MB.")
+    return Attachment(filename=src.filename or "schedule", content_type=src.content_type, data=data)
+
+
+# --- Upload + AI extraction -------------------------------------------------
+
+class ExtractionOut(BaseModel):
+    project_name: Optional[str] = None
+    bearing_mark: Optional[str] = None
+    drawing_ref: Optional[str] = None
+    max_longitudinal_mm: Optional[float] = None
+    max_transverse_mm: Optional[float] = None
+    max_height_mm: Optional[float] = None
+    stated_min_vertical_kN: Optional[float] = None
+    combinations: List[LoadCombinationIn]
+    warnings: List[str]   # what the model flagged while reading the file
+    checks: List[str]     # plain-code sanity checks on the values it returned
+    model: str
+
+
+_upload_log: Dict[str, Deque[float]] = defaultdict(deque)
+_upload_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    # Railway (and most hosts) sit behind a proxy that sets X-Forwarded-For.
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_upload_rate(ip: str) -> None:
+    limit = config.EXTRACTIONS_PER_IP_PER_HOUR
+    if limit <= 0:
+        return
+    now = time.monotonic()
+    with _upload_lock:
+        log = _upload_log[ip]
+        while log and now - log[0] > 3600:
+            log.popleft()
+        if len(log) >= limit:
+            raise HTTPException(429, "You've uploaded several schedules in the last hour. "
+                                     "Please wait a while, or enter the values by hand.")
+        log.append(now)
+
+
+@app.post("/api/extract-schedule", response_model=ExtractionOut)
+async def extract_schedule_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    bearing_mark: str = Form(""),
+) -> ExtractionOut:
+    """Read a bearing schedule from an uploaded PDF/image and return rows to
+    pre-fill the form. Nothing is designed or emailed here -- the visitor
+    reviews the values and submits them through /api/design-schedule."""
+    if not config.ANTHROPIC_API_KEY:
+        raise HTTPException(503, "Schedule upload isn't available right now. Please enter the values by hand.")
+    content_type = (file.content_type or "").lower()
+    if content_type == "image/jpg":
+        content_type = "image/jpeg"
+    if content_type not in ALLOWED_TYPES:
+        raise HTTPException(415, "Please upload a PDF, PNG or JPEG file.")
+    max_bytes = config.MAX_UPLOAD_MB * 1024 * 1024
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(413, f"That file is larger than {config.MAX_UPLOAD_MB} MB.")
+    if not content:
+        raise HTTPException(400, "That file is empty.")
+    if content_type == "application/pdf" and not content.startswith(b"%PDF"):
+        raise HTTPException(415, "That file doesn't look like a PDF.")
+    _check_upload_rate(_client_ip(request))
+
+    from starlette.concurrency import run_in_threadpool
+    try:
+        result = await run_in_threadpool(extract_schedule, content, content_type, bearing_mark)
+    except ExtractionError as exc:
+        raise HTTPException(422, str(exc))
+    return ExtractionOut(
+        project_name=result.project_name, bearing_mark=result.bearing_mark,
+        drawing_ref=result.drawing_ref,
+        max_longitudinal_mm=result.max_longitudinal_mm,
+        max_transverse_mm=result.max_transverse_mm, max_height_mm=result.max_height_mm,
+        stated_min_vertical_kN=result.stated_min_vertical_kN,
+        combinations=[LoadCombinationIn(**c) for c in result.combinations],
+        warnings=result.warnings, checks=result.checks, model=result.model,
+    )
+
+
+@app.get("/api/features")
+def features() -> dict:
+    """Lets the form hide the upload option when it isn't configured."""
+    return {"schedule_upload": bool(config.ANTHROPIC_API_KEY), "max_upload_mb": config.MAX_UPLOAD_MB}
+
+
 @app.post("/api/design-schedule", response_model=DesignRequestOut)
 def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
     if not payload.schedule.combinations:
@@ -229,11 +368,15 @@ def design_schedule(payload: DesignRequestIn) -> DesignRequestOut:
 
     submitter = Submitter(**payload.submitter.model_dump(exclude={"email"}),
                            email=str(payload.submitter.email))
-    subject, html = build_email(schedule, submitter, result)
+    attachment = _decode_source_file(payload.source_file)
+    extraction = payload.extraction.model_dump() if payload.extraction else None
+    subject, html = build_email(schedule, submitter, result, extraction=extraction,
+                                source_filename=attachment.filename if attachment else None)
 
     to_addrs = config.ENGINEERING_EMAILS + config.SALES_EMAILS
     try:
-        send_email(subject, html, to_addrs)
+        send_email(subject, html, to_addrs,
+                   attachments=[attachment] if attachment else None)
     except Exception:  # noqa: BLE001 -- never fail the visitor's request over email delivery
         logger.exception("Failed to send design-request notification email")
         return DesignRequestOut(

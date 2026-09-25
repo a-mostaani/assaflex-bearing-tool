@@ -26,6 +26,8 @@
     --af-ok-bg: #e7f1ea;
     --af-error: #9e3226;
     --af-error-bg: #fbeae6;
+    --af-warn: #9a5b00;        /* "check this" highlight for values read from an upload */
+    --af-warn-bg: #fdf5e4;
     --af-font: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --af-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
@@ -130,7 +132,9 @@
   table.af-combos input, table.af-combos select {
     padding: 5px 6px; font-size: 0.8rem; border-radius: 2px;
   }
-  table.af-combos input { font-family: var(--af-mono); }
+  table.af-combos input { font-family: var(--af-mono); min-width: 64px; }
+  table.af-combos select[data-field="limit_state"] { min-width: 68px; }
+  table.af-combos select[data-field="case"] { min-width: 164px; }
   .af-row-actions { text-align: center; }
   .af-remove-row {
     background: none; border: none; color: var(--af-green); cursor: pointer;
@@ -184,6 +188,46 @@
   #af-design-result li { font-family: var(--af-mono); font-size: 0.82rem; }
 
   .af-submit-row { padding-top: 26px; border-top: 1px solid var(--af-line); }
+
+  /* Schedule upload */
+  #af-upload-section[hidden] { display: none; }
+  .af-dropzone {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px;
+    border: 1px dashed var(--af-line-strong); padding: 16px 18px; background: var(--af-page-bg);
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .af-dropzone.af-drag { border-color: var(--af-green); background: var(--af-green-tint); }
+  .af-dropzone input[type="file"] { width: auto; flex: 1 1 260px; border: none; padding: 0; background: none; }
+  .af-dropzone .af-mark-field { flex: 0 1 180px; }
+  .af-dropzone .af-mark-field label { margin-bottom: 3px; }
+  .af-upload-status { margin-top: 12px; font-size: 0.88rem; color: var(--af-muted); min-height: 1.2em; }
+  .af-upload-status.af-busy::before {
+    content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px;
+    border: 2px solid var(--af-green); border-right-color: transparent; border-radius: 50%;
+    animation: af-spin 0.8s linear infinite; vertical-align: -1px;
+  }
+  .af-upload-status.af-error { color: var(--af-error); }
+  @keyframes af-spin { to { transform: rotate(360deg); } }
+  .af-small-print { font-size: 0.8rem; color: var(--af-muted); margin: 10px 0 0; max-width: 70ch; }
+
+  #af-extract-review {
+    display: none; margin: 0 0 16px; padding: 14px 16px; border-left: 3px solid var(--af-warn);
+    background: var(--af-warn-bg); font-size: 0.88rem; line-height: 1.5;
+  }
+  #af-extract-review.af-show { display: block; }
+  #af-extract-review strong { color: var(--af-ink); }
+  #af-extract-review ul { margin: 8px 0 0; padding-left: 18px; }
+  table.af-combos tr.af-extracted td { background: var(--af-warn-bg); }
+  table.af-combos tr.af-extracted input:not(.af-touched), table.af-combos tr.af-extracted select:not(.af-touched) {
+    border-color: var(--af-warn);
+  }
+  .af-confirm { display: none; margin-bottom: 16px; }
+  .af-confirm.af-show { display: block; }
+  .af-confirm label {
+    display: flex; gap: 10px; align-items: flex-start; font-size: 0.9rem; color: var(--af-body);
+    margin: 0; cursor: pointer;
+  }
+  .af-confirm input { width: auto; margin-top: 3px; accent-color: var(--af-green); }
 </style>
 </head>
 <body>
@@ -217,8 +261,8 @@
               <input id="af-name" required>
             </div>
             <div class="af-field">
-              <label for="af-company">Company</label>
-              <input id="af-company">
+              <label class="af-required" for="af-company">Company</label>
+              <input id="af-company" required autocomplete="organization">
             </div>
             <div class="af-field">
               <label class="af-required" for="af-email">Email</label>
@@ -230,8 +274,8 @@
             </div>
           </div>
           <div class="af-field">
-            <label for="af-schedule-label">Project / bearing reference</label>
-            <input id="af-schedule-label" placeholder="e.g. Robinson Bridge, bearing mark 1.1">
+            <label class="af-required" for="af-schedule-label">Project name</label>
+            <input id="af-schedule-label" required placeholder="e.g. Robinson Bridge, bearing mark 1.1">
           </div>
           <div class="af-field">
             <label for="af-notes">Notes (optional)</label>
@@ -240,10 +284,39 @@
         </div>
       </div>
 
+      <div class="af-section" id="af-upload-section" hidden>
+        <div class="af-section-head">
+          <span class="af-index">02</span>
+          <h2>Upload your bearing schedule <span style="font-weight:400;color:var(--af-muted)">(optional)</span></h2>
+        </div>
+        <p class="af-section-note">
+          Have a bearing schedule drawing? Upload it and we'll read the load
+          combinations and maximum dimensions into the form below for you to
+          check. Or skip this and fill in the form by hand.
+        </p>
+        <div class="af-section-body">
+          <div class="af-dropzone" id="af-dropzone">
+            <input type="file" id="af-schedule-file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg">
+            <div class="af-mark-field">
+              <label for="af-bearing-mark">Bearing mark (if several)</label>
+              <input id="af-bearing-mark" placeholder="e.g. 1.1">
+            </div>
+            <button type="button" class="af-btn af-secondary" id="af-read-file-btn" disabled>Read schedule</button>
+          </div>
+          <div class="af-upload-status" id="af-upload-status" role="status" aria-live="polite"></div>
+          <p class="af-small-print">
+            PDF, PNG or JPEG, up to <span id="af-max-mb">10</span>&nbsp;MB. Your file is read by
+            an AI service (Anthropic's Claude) to fill in the form, and is sent to our
+            engineers with your request. AI can misread values: you'll be asked to check
+            them before submitting.
+          </p>
+        </div>
+      </div>
+
       <div class="af-section af-section-pair">
         <div class="af-subsection">
           <div class="af-section-head">
-            <span class="af-index">02</span>
+            <span class="af-index">03</span>
             <h2>Maximum bearing envelope</h2>
           </div>
           <p class="af-section-note">The largest footprint and height your structure can accept.</p>
@@ -267,7 +340,7 @@
 
         <div class="af-subsection">
           <div class="af-section-head">
-            <span class="af-index">03</span>
+            <span class="af-index">04</span>
             <h2>Minimum vertical load</h2>
           </div>
           <p class="af-section-note">
@@ -288,7 +361,7 @@
 
       <div class="af-section">
         <div class="af-section-head">
-          <span class="af-index">04</span>
+          <span class="af-index">05</span>
           <h2>Load combinations</h2>
         </div>
         <p class="af-section-note">
@@ -296,6 +369,7 @@
           Vertical, ULS Max Longitudinal, and so on. Add as many rows as you need.
         </p>
         <div class="af-section-body af-full-bleed">
+          <div id="af-extract-review" role="region" aria-label="Values read from your file"></div>
           <div class="af-table-scroll">
             <table class="af-combos" id="af-combos-table">
               <thead>
@@ -315,7 +389,7 @@
 
       <div class="af-section">
         <div class="af-section-head">
-          <span class="af-index">05</span>
+          <span class="af-index">06</span>
           <h2>What should happen next?</h2>
         </div>
         <div class="af-section-body">
@@ -339,6 +413,12 @@
       </div>
 
       <div class="af-submit-row">
+        <div class="af-confirm" id="af-confirm">
+          <label>
+            <input type="checkbox" id="af-confirm-checked">
+            <span>I've checked the values read from my file against my schedule, and corrected any that were wrong.</span>
+          </label>
+        </div>
         <button type="submit" class="af-btn" id="af-submit-btn">Submit request</button>
         <div id="af-status"></div>
         <div id="af-design-result"></div>
@@ -359,9 +439,10 @@
 
   const tbody = document.getElementById("af-combos-body");
 
-  function addRow(values) {
+  function addRow(values, extracted) {
     values = values || {};
     const tr = document.createElement("tr");
+    if (extracted) tr.className = "af-extracted";
     const selectHtml = (options, current) => options.map(
       o => `<option value="${o}" ${o === current ? "selected" : ""}>${o}</option>`
     ).join("");
@@ -381,6 +462,10 @@
       <td class="af-row-actions"><button type="button" class="af-remove-row" title="Remove row">&times;</button></td>
     `;
     tr.querySelector(".af-remove-row").addEventListener("click", () => tr.remove());
+    // Once someone has looked at and edited an extracted cell, drop its
+    // "please check me" outline.
+    tr.querySelectorAll("input, select").forEach(el =>
+      el.addEventListener("change", () => el.classList.add("af-touched")));
     tbody.appendChild(tr);
   }
 
@@ -388,6 +473,147 @@
 
   // Start with three blank rows to get people going.
   addRow(); addRow(); addRow();
+
+  // ---- Schedule upload (AI extraction) ------------------------------------
+  // The file is read server-side (POST /api/extract-schedule) and the answer
+  // only ever pre-fills this form: the visitor checks the values, ticks the
+  // confirmation box, and submits as usual. The original file then travels
+  // with the request so engineering can check the values against it.
+  const uploadSection = document.getElementById("af-upload-section");
+  const fileInput = document.getElementById("af-schedule-file");
+  const readBtn = document.getElementById("af-read-file-btn");
+  const uploadStatus = document.getElementById("af-upload-status");
+  const dropzone = document.getElementById("af-dropzone");
+  const reviewBox = document.getElementById("af-extract-review");
+  const confirmBox = document.getElementById("af-confirm");
+  const confirmInput = document.getElementById("af-confirm-checked");
+  let maxUploadMb = 10;
+  let uploaded = null;  // {filename, content_type, data_base64, extraction}
+
+  fetch(API_BASE + "/api/features").then(r => r.ok ? r.json() : null).then(f => {
+    if (f && f.schedule_upload) {
+      maxUploadMb = f.max_upload_mb || maxUploadMb;
+      document.getElementById("af-max-mb").textContent = maxUploadMb;
+      uploadSection.hidden = false;
+    }
+  }).catch(() => { /* upload stays hidden; the form works by hand */ });
+
+  function setUploadStatus(text, kind) {
+    uploadStatus.textContent = text || "";
+    uploadStatus.className = "af-upload-status" + (kind ? " af-" + kind : "");
+  }
+
+  fileInput.addEventListener("change", () => {
+    readBtn.disabled = !fileInput.files.length;
+    setUploadStatus("");
+  });
+  ["dragenter", "dragover"].forEach(ev => dropzone.addEventListener(ev, e => {
+    e.preventDefault(); dropzone.classList.add("af-drag");
+  }));
+  ["dragleave", "drop"].forEach(ev => dropzone.addEventListener(ev, e => {
+    e.preventDefault(); dropzone.classList.remove("af-drag");
+  }));
+  dropzone.addEventListener("drop", e => {
+    if (e.dataTransfer && e.dataTransfer.files.length) {
+      fileInput.files = e.dataTransfer.files;
+      fileInput.dispatchEvent(new Event("change"));
+    }
+  });
+
+  function readAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function escapeHtml(text) {
+    const d = document.createElement("div");
+    d.textContent = text == null ? "" : String(text);
+    return d.innerHTML;
+  }
+
+  function errorText(data, fallback) {
+    if (data && typeof data.detail === "string") return data.detail;
+    if (data && Array.isArray(data.detail)) {
+      return "Please check: " + data.detail.map(d => (d.loc || []).slice(-1)[0] + " — " + d.msg).join("; ");
+    }
+    return fallback;
+  }
+
+  function setNumber(id, value) {
+    if (value !== null && value !== undefined) document.getElementById(id).value = value;
+  }
+
+  function applyExtraction(x) {
+    const projectEl = document.getElementById("af-schedule-label");
+    if (!projectEl.value.trim() && x.project_name) {
+      projectEl.value = x.project_name + (x.bearing_mark ? ", bearing mark " + x.bearing_mark : "");
+    }
+    setNumber("af-max-long", x.max_longitudinal_mm);
+    setNumber("af-max-trans", x.max_transverse_mm);
+    setNumber("af-max-height", x.max_height_mm);
+
+    tbody.innerHTML = "";
+    x.combinations.forEach(row => addRow(row, true));
+
+    const notes = [...(x.warnings || []), ...(x.checks || [])];
+    reviewBox.innerHTML =
+      `<strong>We filled in ${x.combinations.length} load combination${x.combinations.length === 1 ? "" : "s"}` +
+      `${x.bearing_mark ? " for bearing mark " + escapeHtml(x.bearing_mark) : ""} from your file.</strong> ` +
+      `Please check every highlighted value against your schedule and correct anything that's wrong` +
+      ` before submitting — including the envelope above.` +
+      (notes.length ? `<ul>${notes.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>` : "");
+    reviewBox.classList.add("af-show");
+    confirmBox.classList.add("af-show");
+    confirmInput.checked = false;
+  }
+
+  function clearExtraction() {
+    uploaded = null;
+    reviewBox.classList.remove("af-show");
+    reviewBox.innerHTML = "";
+    confirmBox.classList.remove("af-show");
+    confirmInput.checked = false;
+    tbody.querySelectorAll("tr.af-extracted").forEach(tr => tr.classList.remove("af-extracted"));
+  }
+
+  readBtn.addEventListener("click", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (file.size > maxUploadMb * 1024 * 1024) {
+      setUploadStatus(`That file is larger than ${maxUploadMb} MB.`, "error");
+      return;
+    }
+    readBtn.disabled = true;
+    setUploadStatus("Reading your schedule — this can take up to a minute…", "busy");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("bearing_mark", document.getElementById("af-bearing-mark").value);
+    try {
+      const res = await fetch(API_BASE + "/api/extract-schedule", { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUploadStatus(errorText(data, "We couldn't read that file. Please enter the values by hand."), "error");
+        return;
+      }
+      applyExtraction(data);
+      uploaded = {
+        filename: file.name,
+        content_type: file.type || "application/pdf",
+        data_base64: await readAsBase64(file),
+        extraction: { model: data.model, warnings: data.warnings || [], checks: data.checks || [] }
+      };
+      setUploadStatus("Done — please check the values below.", "");
+      document.getElementById("af-extract-review").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      setUploadStatus("Couldn't reach the server. Please try again, or enter the values by hand.", "error");
+    } finally {
+      readBtn.disabled = !fileInput.files.length;
+    }
+  });
 
   // Mode toggle: reveal the access-code field only when that path is chosen,
   // and adjust the submit button's label so it's clear what will happen.
@@ -514,6 +740,13 @@
       return;
     }
 
+    if (uploaded && !confirmInput.checked) {
+      statusEl.textContent = "Please check the values read from your file, then tick the confirmation box.";
+      statusEl.className = "af-error";
+      confirmBox.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
     const mode = currentMode();
     if (mode === "access-code" && !accessCodeInput.value.trim()) {
       statusEl.textContent = "Enter an access code, or switch to “send for review”.";
@@ -544,6 +777,11 @@
       },
       access_code: mode === "access-code" ? accessCodeInput.value.trim() : ""
     };
+    if (uploaded && mode !== "access-code") {
+      payload.source_file = { filename: uploaded.filename, content_type: uploaded.content_type,
+                              data_base64: uploaded.data_base64 };
+      payload.extraction = uploaded.extraction;
+    }
     lastPayload = payload;
 
     const submittingLabel = mode === "access-code" ? "Checking…" : "Submitting…";
@@ -567,13 +805,16 @@
         statusEl.textContent = data.message || "Request received.";
         statusEl.className = "af-ok";
         document.getElementById("af-design-form").reset();
+        clearExtraction();
+        setUploadStatus("");
+        readBtn.disabled = true;
         updateModeUI();
       } else if (res.status === 401) {
         statusEl.textContent = "Incorrect access code. Check it and try again, " +
           "or switch to “send for review” instead.";
         statusEl.className = "af-error";
       } else {
-        statusEl.textContent = (data.detail || "Something went wrong. Please try again.");
+        statusEl.textContent = errorText(data, "Something went wrong. Please try again.");
         statusEl.className = "af-error";
       }
     } catch (err) {

@@ -11,10 +11,11 @@ build log). Only internal recipients see the numbers.
 
 from __future__ import annotations
 
+import html as _html
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
-from typing import Optional
+from typing import List, Optional
 
 from bearing_tool.optimizer import ScheduleOptimizationResult
 from bearing_tool.schedule import BearingSchedule
@@ -31,6 +32,18 @@ class Submitter:
     notes: str = ""
 
 
+@dataclass
+class Attachment:
+    filename: str
+    content_type: str
+    data: bytes
+
+
+def _esc(text: Optional[str]) -> str:
+    """Visitor-typed text goes into an HTML email -- escape it."""
+    return _html.escape(text or "")
+
+
 def _fmt(value: Optional[float], unit: str = "", digits: int = 1) -> str:
     if value is None:
         return "—"
@@ -38,10 +51,35 @@ def _fmt(value: Optional[float], unit: str = "", digits: int = 1) -> str:
 
 
 def build_email(schedule: BearingSchedule, submitter: Submitter,
-                 result: ScheduleOptimizationResult) -> tuple[str, str]:
-    """Returns (subject, html_body)."""
-    label = schedule.label or "(no label given)"
-    subject = f"[PRELIMINARY] Bearing design request — {submitter.company or submitter.name} — {label}"
+                 result: ScheduleOptimizationResult,
+                 extraction: Optional[dict] = None,
+                 source_filename: Optional[str] = None) -> tuple[str, str]:
+    """Returns (subject, html_body).
+
+    `extraction` (model/warnings/checks) and `source_filename` are set when
+    the visitor filled the form by uploading their schedule -- the email then
+    says so prominently, lists what was flagged, and (via send_email's
+    attachments) carries the original file so the values can be checked.
+    """
+    raw_label = schedule.label or "(no project name given)"
+    label = _esc(raw_label)
+    subject = f"[PRELIMINARY] Bearing design request — {submitter.company or submitter.name} — {raw_label}"
+
+    extraction_html = ""
+    if extraction is not None:
+        flagged = [*extraction.get("warnings", []), *extraction.get("checks", [])]
+        flagged_html = ("<ul>" + "".join(f"<li>{_esc(w)}</li>" for w in flagged) + "</ul>"
+                        if flagged else "<p>Nothing was flagged.</p>")
+        extraction_html = f"""
+    <div style="border-left:4px solid #b00020; padding:8px 12px; background:#fff5f5;">
+      <p><strong>Schedule values were read from an uploaded file by AI</strong>
+      ({_esc(extraction.get('model'))}) and then reviewed and submitted by the
+      visitor. Check them against the attached original
+      {('(<em>' + _esc(source_filename) + '</em>)') if source_filename else ''}
+      before relying on this design.</p>
+      <p>Flagged while reading the file:</p>
+      {flagged_html}
+    </div>"""
 
     rows_html = "".join(
         f"<tr><td>{c.limit_state}</td><td>{c.case}</td>"
@@ -113,12 +151,14 @@ def build_email(schedule: BearingSchedule, submitter: Submitter,
     html = f"""
     <html><body style="font-family: Arial, sans-serif; font-size: 14px;">
     <h2>New bearing design request — {label}</h2>
-    <p><strong>Submitted by:</strong> {submitter.name}
-       ({submitter.company or 'no company given'})<br>
-       <strong>Email:</strong> {submitter.email}<br>
-       {"<strong>Phone:</strong> " + submitter.phone + "<br>" if submitter.phone else ""}
+    <p><strong>Project:</strong> {label}<br>
+       <strong>Company:</strong> {_esc(submitter.company) or '—'}<br>
+       <strong>Submitted by:</strong> {_esc(submitter.name)}<br>
+       <strong>Email:</strong> {_esc(submitter.email)}<br>
+       {"<strong>Phone:</strong> " + _esc(submitter.phone) + "<br>" if submitter.phone else ""}
     </p>
-    {"<p><strong>Notes from submitter:</strong><br>" + submitter.notes + "</p>" if submitter.notes else ""}
+    {"<p><strong>Notes from submitter:</strong><br>" + _esc(submitter.notes) + "</p>" if submitter.notes else ""}
+    {extraction_html}
 
     {result_html}
 
@@ -147,7 +187,8 @@ def build_email(schedule: BearingSchedule, submitter: Submitter,
     return subject, html
 
 
-def send_email(subject: str, html_body: str, to_addrs: list[str]) -> None:
+def send_email(subject: str, html_body: str, to_addrs: list[str],
+               attachments: Optional[List[Attachment]] = None) -> None:
     """Sends via the SMTP relay configured in webapp/config.py.
 
     Raises on failure -- the caller decides whether that should fail the
@@ -162,6 +203,10 @@ def send_email(subject: str, html_body: str, to_addrs: list[str]) -> None:
     msg["To"] = ", ".join(to_addrs)
     msg.set_content("This email requires an HTML-capable mail client.")
     msg.add_alternative(html_body, subtype="html")
+    for att in attachments or []:
+        maintype, _, subtype = att.content_type.partition("/")
+        msg.add_attachment(att.data, maintype=maintype, subtype=subtype or "octet-stream",
+                           filename=att.filename)
 
     with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT) as server:
         if config.SMTP_STARTTLS:

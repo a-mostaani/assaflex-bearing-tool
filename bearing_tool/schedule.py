@@ -295,7 +295,14 @@ class BearingSchedule:
            demand. Only added for whichever limit states the schedule
            actually states them for (this format often omits ALS here).
         """
-        data = json.loads(Path(path).read_text())
+        return cls.from_client_schedule_dict(json.loads(Path(path).read_text()))
+
+    @classmethod
+    def from_client_schedule_dict(cls, data: dict) -> "BearingSchedule":
+        """Same as from_client_schedule_json, from an already-parsed dict --
+        also what webapp/extract.py's AI extraction produces, so a schedule
+        read from an uploaded drawing is flattened by exactly the same rules
+        as a hand-transcribed one."""
         combos: List[LoadCombination] = []
         for c in data.get("combinations", []):
             case = c["case"]

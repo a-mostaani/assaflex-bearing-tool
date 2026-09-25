@@ -40,7 +40,7 @@ VALID_PAYLOAD = {
 def test_valid_submission_sends_one_email_and_does_not_leak_the_design(monkeypatch):
     sent = {}
 
-    def fake_send_email(subject, html_body, to_addrs):
+    def fake_send_email(subject, html_body, to_addrs, attachments=None):
         sent["subject"] = subject
         sent["html_body"] = html_body
         sent["to_addrs"] = to_addrs
@@ -86,7 +86,7 @@ def test_msf_above_one_rejected():
 
 
 def test_email_failure_is_reported_but_request_still_succeeds(monkeypatch):
-    def failing_send_email(subject, html_body, to_addrs):
+    def failing_send_email(subject, html_body, to_addrs, attachments=None):
         raise RuntimeError("SMTP is down")
 
     monkeypatch.setattr(webapp_main, "send_email", failing_send_email)
@@ -148,7 +148,7 @@ def test_access_code_ignored_when_none_configured(monkeypatch):
 def test_blank_access_code_still_goes_through_the_normal_review_flow(monkeypatch):
     sent = {}
     monkeypatch.setattr(webapp_main, "send_email",
-                         lambda subject, html_body, to_addrs: sent.setdefault("sent", True))
+                         lambda subject, html_body, to_addrs, attachments=None: sent.setdefault("sent", True))
 
     payload = {**VALID_PAYLOAD, "access_code": ""}
     resp = client.post("/api/design-schedule", json=payload)
@@ -180,3 +180,172 @@ def test_design_out_reports_a_stated_min_vertical_kN(monkeypatch):
     design = resp.json()["design"]
     assert design["min_vertical_assumed_zero"] is False
     assert design["min_vertical_kN_used"] == 500
+
+
+# ---------------------------------------------------------------------------
+# Required project/company names
+# ---------------------------------------------------------------------------
+
+import copy
+
+import pytest
+
+
+@pytest.mark.parametrize("path", [("submitter", "company"), ("schedule", "label")])
+@pytest.mark.parametrize("value", ["", "   "])
+def test_company_and_project_name_are_required(monkeypatch, path, value):
+    monkeypatch.setattr(webapp_main, "send_email",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no email expected")))
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload[path[0]][path[1]] = value
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Schedule upload / AI extraction (API call mocked -- never hits the network)
+# ---------------------------------------------------------------------------
+
+import base64
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from extraction_fixtures import H3428_PATH, h3428_model_answer  # noqa: E402
+
+from webapp import config as webapp_config  # noqa: E402
+from webapp import extract as webapp_extract  # noqa: E402
+
+PDF_BYTES = b"%PDF-1.4\n% fake test pdf\n"
+
+
+class _FakeToolUse:
+    type = "tool_use"
+
+    def __init__(self, data):
+        self.input = data
+
+
+class _FakeResponse:
+    def __init__(self, data):
+        self.content = [_FakeToolUse(data)]
+        self.stop_reason = "tool_use"
+
+
+class _FakeClient:
+    def __init__(self, data):
+        self.calls = []
+        self._data = data
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return _FakeResponse(self._data)
+
+
+@pytest.fixture
+def extraction_on(monkeypatch):
+    monkeypatch.setattr(webapp_config, "ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(webapp_config, "EXTRACTIONS_PER_IP_PER_HOUR", 0)
+    fake = _FakeClient(h3428_model_answer())
+    monkeypatch.setattr(webapp_extract, "_client", lambda: fake)
+    return fake
+
+
+def test_extract_schedule_prefills_rows_matching_the_hand_transcription(extraction_on):
+    from bearing_tool.schedule import BearingSchedule
+    resp = client.post("/api/extract-schedule",
+                       files={"file": ("H3428.pdf", PDF_BYTES, "application/pdf")})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    ref = BearingSchedule.from_client_schedule_json(H3428_PATH)
+    assert len(body["combinations"]) == len(ref.combinations) == 14
+    for got, want in zip(body["combinations"], ref.combinations):
+        assert got["limit_state"] == want.limit_state and got["case"] == want.case
+        assert got["vertical_kN"] == want.vertical_kN
+        assert got["rotation_mrad"] == want.rotation_mrad
+        assert got["transverse_rotation_mrad"] == want.transverse_rotation_mrad
+    assert (body["max_longitudinal_mm"], body["max_transverse_mm"], body["max_height_mm"]) == (450, 600, 100)
+    assert body["warnings"]            # the model's own flag is passed through
+    assert body["checks"]              # and the plain-code checks run
+
+    # The PDF went to the model as a document block, with a forced tool call.
+    call = extraction_on.calls[0]
+    assert call["tool_choice"] == {"type": "tool", "name": "record_bearing_schedule"}
+    assert call["messages"][0]["content"][0]["type"] == "document"
+
+
+def test_extract_schedule_rejects_wrong_types_and_oversize(extraction_on, monkeypatch):
+    r = client.post("/api/extract-schedule", files={"file": ("x.docx", b"PK..", "application/msword")})
+    assert r.status_code == 415
+    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", b"not a pdf", "application/pdf")})
+    assert r.status_code == 415
+    monkeypatch.setattr(webapp_config, "MAX_UPLOAD_MB", 0)
+    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    assert r.status_code == 413
+    assert not extraction_on.calls  # none of these reached the paid API
+
+
+def test_extract_schedule_unavailable_without_api_key(monkeypatch):
+    monkeypatch.setattr(webapp_config, "ANTHROPIC_API_KEY", "")
+    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    assert r.status_code == 503
+    assert client.get("/api/features").json()["schedule_upload"] is False
+
+
+def test_extract_schedule_reports_when_no_schedule_found(extraction_on):
+    extraction_on._data = {"found_schedule": False, "combinations": [], "warnings": []}
+    r = client.post("/api/extract-schedule", files={"file": ("x.pdf", PDF_BYTES, "application/pdf")})
+    assert r.status_code == 422
+    assert "couldn't find" in r.json()["detail"]
+
+
+def test_extract_schedule_is_rate_limited_per_ip(extraction_on, monkeypatch):
+    monkeypatch.setattr(webapp_config, "EXTRACTIONS_PER_IP_PER_HOUR", 2)
+    webapp_main._upload_log.clear()
+    headers = {"x-forwarded-for": "203.0.113.9"}
+    codes = [client.post("/api/extract-schedule", headers=headers,
+                         files={"file": ("x.pdf", PDF_BYTES, "application/pdf")}).status_code
+             for _ in range(3)]
+    assert codes == [200, 200, 429]
+    webapp_main._upload_log.clear()
+
+
+def test_validation_flags_unit_slips_and_swapped_values():
+    data = h3428_model_answer()
+    data["combinations"][1]["coincident_rotation_mrad"] = 0.00351   # given in rad
+    data["combinations"][2]["vertical_kN"] = 5000                    # SLS Min > Max
+    result = webapp_extract.build_result(data, model="test")
+    joined = " ".join(result.checks)
+    assert "unusually small" in joined
+    assert "Min Vertical" in joined and "larger than Max Vertical" in joined
+
+
+def test_uploaded_file_is_attached_to_the_engineering_email(monkeypatch):
+    sent = {}
+
+    def fake_send_email(subject, html_body, to_addrs, attachments=None):
+        sent.update(html=html_body, attachments=attachments)
+
+    monkeypatch.setattr(webapp_main, "send_email", fake_send_email)
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["submitter"]["company"] = "<b>Acme</b>"
+    payload["source_file"] = {"filename": "schedule.pdf", "content_type": "application/pdf",
+                              "data_base64": base64.b64encode(PDF_BYTES).decode()}
+    payload["extraction"] = {"model": "claude-test", "warnings": ["SLS row: [rad] read as mrad"],
+                             "checks": []}
+    resp = client.post("/api/design-schedule", json=payload)
+    assert resp.status_code == 200
+    [att] = sent["attachments"]
+    assert att.filename == "schedule.pdf" and att.data == PDF_BYTES
+    assert "read from an uploaded file by AI" in sent["html"]
+    assert "[rad] read as mrad" in sent["html"]
+    assert "<b>Acme</b>" not in sent["html"]  # visitor text is escaped
+
+
+def test_submission_rejects_a_disguised_attachment(monkeypatch):
+    monkeypatch.setattr(webapp_main, "send_email", lambda *a, **k: None)
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["source_file"] = {"filename": "x.exe", "content_type": "application/x-msdownload",
+                              "data_base64": base64.b64encode(b"MZ").decode()}
+    assert client.post("/api/design-schedule", json=payload).status_code == 400
